@@ -1,0 +1,9 @@
+{
+  "name": "Солнечная ферма",
+  "short_name": "Ферма",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#2f8fb3",
+  "theme_color": "#2f8fb3"
+}

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#2f8fb3" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>Солнечная ферма</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@600;800&display=swap" rel="stylesheet" />
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #173f52;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        font-family: Rubik, sans-serif;
+      }
+      /* Игровое поле: на телефоне — весь экран, на компьютере — «телефон» по центру */
+      #game {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        overflow: hidden;
+        background: #2f8fb3;
+      }
+      body.desktop #game {
+        border-radius: 36px;
+        box-shadow: 0 0 0 10px #0d2530, 0 30px 80px rgba(0, 0, 0, 0.5);
+      }
+      #game canvas { display: block; }
+      #safe {
+        position: fixed;
+        visibility: hidden;
+        pointer-events: none;
+        padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+      }
+      /* Игра только для вертикального телефона */
+      #rotate {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        background: #173f52;
+        color: #fff;
+        font-weight: 800;
+        font-size: 22px;
+        text-align: center;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+      #rotate .phone {
+        width: 48px;
+        height: 84px;
+        border: 5px solid #fff;
+        border-radius: 12px;
+        animation: turn 2s ease-in-out infinite;
+      }
+      @keyframes turn {
+        0%, 20% { transform: rotate(-90deg); }
+        60%, 100% { transform: rotate(0deg); }
+      }
+      @media (orientation: landscape) and (pointer: coarse) {
+        #rotate { display: flex; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="safe"></div>
+    <div id="rotate"><div class="phone"></div>Поверните телефон вертикально</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
