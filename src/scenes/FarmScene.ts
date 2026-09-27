@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { anchor, generateArt, POINTS } from '../game/art';
 import { DPR, state } from '../game/context';
 import { sfx } from '../game/sfx';
-import { CROPS, MUSHROOMS, type CropId, type ItemId, type Mushroom, type Plot } from '../game/state';
+import { CROPS, ITEM_IDS, type CropId, type ItemId, type Mushroom, type Plot } from '../game/state';
 import {
   BRIDGES,
   MEADOW_PATH,
@@ -39,6 +39,8 @@ type Emitter = Phaser.GameObjects.Particles.ParticleEmitter;
 interface PlotView {
   plot: Plot;
   base: Img;
+  /** Покачивающийся колосок над пустой грядкой: «сажай сюда». */
+  cue: Img;
   crop: Img | null;
   stageKey: string;
   tweens: Phaser.Tweens.Tween[];
@@ -137,6 +139,7 @@ export class FarmScene extends Phaser.Scene {
     this.buildAmbient();
     this.buildForestAmbient();
     this.meadow = new Meadow(this);
+    this.buildCues();
     this.whale = new Whale(this);
     this.setupCamera();
     this.setupInput();
@@ -328,6 +331,71 @@ export class FarmScene extends Phaser.Scene {
     return objs;
   }
 
+  // ---------------------------------------------------------------- подсказки на объектах
+
+  private cues!: { barn: Phaser.GameObjects.Container; forest: Phaser.GameObjects.Container; meadow: Phaser.GameObjects.Container };
+  private meadowIcon!: Img;
+  private meadowHalo!: Img;
+
+  /** Пузырь-подсказка над объектом: пульсирует и покачивается. */
+  private makeCue(x: number, y: number, icon: string, halo: number) {
+    const h = this.add.image(0, 0, 'soft').setScale(3).setTint(halo).setAlpha(0.6);
+    const b = this.add.image(0, 0, 'bubble').setScale(0.75);
+    const i = this.add.image(0, -2, icon).setScale(0.9);
+    const c = this.add.container(x, y, [h, b, i]).setDepth(D.fx - 2).setVisible(false);
+    this.tweens.add({ targets: c, y: y - 24, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    this.tweens.add({ targets: h, alpha: 0.2, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    return { c, h, i };
+  }
+
+  private buildCues() {
+    const sign = (kind: string) => {
+      const d = DECOR.find((x) => x.kind === kind)!;
+      return tileCenter(d.tx, d.ty);
+    };
+    const barn = this.makeCue(this.barn.x - 170, this.barn.y - 290, 'i_coin', 0xffd84a);
+    const f = sign('sign');
+    const forest = this.makeCue(f.x, f.y - 230, 'i_mush', 0xfff3a0);
+    const m = sign('signMeadow');
+    const meadow = this.makeCue(m.x, m.y - 230, 'i_grass', 0xff3b2f);
+    this.meadowIcon = meadow.i;
+    this.meadowHalo = meadow.h;
+    this.cues = { barn: barn.c, forest: forest.c, meadow: meadow.c };
+  }
+
+  private showCue(c: Phaser.GameObjects.Container, on: boolean) {
+    if (c.visible === on) return;
+    c.setVisible(on);
+    if (on) {
+      c.setScale(0);
+      this.tweens.add({ targets: c, scale: 1, duration: 400, ease: 'Back.Out' });
+    }
+  }
+
+  /**
+   * Подсказки без слов: что можно сделать, видно прямо на объектах.
+   * Амбар — монетка, если есть что продать; пустые грядки — колосок;
+   * указатель в лес — гриб, если грибы выросли; указатель на луг — трава
+   * (животные голодные) или бутылка молока (продукция готова).
+   */
+  private updateCues() {
+    if (!this.cues) return;
+    const stock = ITEM_IDS.reduce((a, k) => a + state.inventory[k], 0);
+    this.showCue(this.cues.barn, stock > 0 && !this.buildMode);
+    for (const v of this.plotViews.values()) v.cue.setVisible(!v.plot.crop && !this.buildMode && !this.intro);
+    this.showCue(this.cues.forest, state.mushrooms.some((m) => state.mushroomGrowth(m) >= 1));
+    const ready = state.animals.find((a) => state.produce(a) >= 1);
+    const hungry = state.animals.some((a) => a.fedAt === null);
+    if (ready) {
+      this.meadowIcon.setTexture(ready.kind === 'cow' ? 'i_milk' : 'i_wool');
+      this.meadowHalo.setTint(0xffd84a);
+    } else {
+      this.meadowIcon.setTexture('i_grass');
+      this.meadowHalo.setTint(0xff3b2f);
+    }
+    this.showCue(this.cues.meadow, !!ready || hungry);
+  }
+
   // ---------------------------------------------------------------- грибы
 
   private addMushroomView(m: Mushroom, animate: boolean) {
@@ -393,11 +461,9 @@ export class FarmScene extends Phaser.Scene {
 
   private tapMushroom(view: MushroomView) {
     const { m, img } = view;
-    const def = MUSHROOMS[m.kind];
     const screen = this.toScreen(img.x, img.y - 40);
     if (state.mushroomGrowth(m) < 1) {
-      const sec = Math.ceil(state.mushroomMsLeft(m) / 1000);
-      this.ui.floatText(screen.x, screen.y - 20, `Ещё растёт · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`, '#ffffff');
+      this.ui.progress(screen.x, screen.y - 40, state.mushroomGrowth(m), `i_${m.kind}`);
       this.tweens.add({ targets: img, angle: { from: -8, to: 8 }, duration: 60, yoyo: true, repeat: 2, onComplete: () => img.setAngle(0) });
       sfx.click();
       return;
@@ -405,14 +471,11 @@ export class FarmScene extends Phaser.Scene {
     if (!state.pickMushroom(m.id)) return;
     this.mushViews.delete(m.id);
     view.idle?.remove();
-    this.ui.foundMushroom = true;
-    this.ui.updateHint();
 
     const rare = m.kind === 'porcini';
     sfx.mushroom(rare);
     this.fx.stars.explode(rare ? 22 : 12, img.x, img.y - 30);
     this.fx.leaves.explode(6, img.x, img.y - 10);
-    this.ui.floatText(screen.x, screen.y - 30, rare ? `${def.name}!` : def.name, rare ? '#ffe066' : '#ffffff');
     this.ui.flyIcons(screen.x, screen.y, 'i_star', 'xp', 1, 200);
     this.flyToBarn(img, 'mushrooms', rare);
   }
@@ -504,7 +567,10 @@ export class FarmScene extends Phaser.Scene {
   private addPlotView(plot: Plot, animate: boolean) {
     const p = iso(plot.tx, plot.ty);
     const base = anchor(this.add.image(p.x, p.y, 'plot'), 'plot').setDepth(D.plot + p.y);
-    const view: PlotView = { plot, base, crop: null, stageKey: '', tweens: [] };
+    const cc = tileCenter(plot.tx, plot.ty);
+    const cue = this.add.image(cc.x, cc.y - 70, 'i_wheat').setScale(0.62).setAlpha(0.85).setDepth(D.fx - 4).setVisible(false);
+    this.tweens.add({ targets: cue, y: cc.y - 95, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.InOut', delay: Phaser.Math.Between(0, 600) });
+    const view: PlotView = { plot, base, cue, crop: null, stageKey: '', tweens: [] };
     this.plotViews.set(plot.id, view);
     this.refreshPlot(view, false);
     if (animate) {
@@ -1023,8 +1089,7 @@ export class FarmScene extends Phaser.Scene {
       return;
     }
     if (state.growth(plot) < 1) {
-      const s = Math.ceil(state.msLeft(plot) / 1000);
-      this.ui.floatText(screen.x, screen.y - 70, `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, '#ffffff');
+      this.ui.progress(screen.x, screen.y - 80, state.growth(plot), plot.crop === 'wheat' ? 'i_wheat' : 'i_carrot');
       if (view.crop) this.tweens.add({ targets: view.crop, angle: { from: -4, to: 4 }, duration: 70, yoyo: true, repeat: 2, onComplete: () => view.crop?.setAngle(0) });
       sfx.click();
       return;
@@ -1038,7 +1103,7 @@ export class FarmScene extends Phaser.Scene {
     if (!state.plant(plot, crop)) {
       sfx.error();
       this.ui.shakeCounter('coins');
-      this.ui.floatText(screen.x, screen.y - 60, 'Не хватает монет', '#ff8a7a');
+      this.ui.noMoney(screen.x, screen.y - 60);
       return;
     }
     sfx.plant();
@@ -1078,8 +1143,8 @@ export class FarmScene extends Phaser.Scene {
       sq(img);
       const sold = state.sellAll();
       if (!sold.length) {
+        // пусто: амбар просто вздрагивает, продавать нечего
         sfx.click();
-        this.ui.floatText(top.x, top.y, 'Амбар пуст — соберите урожай', '#ffffff');
         return;
       }
       sfx.whoosh();
@@ -1167,7 +1232,7 @@ export class FarmScene extends Phaser.Scene {
     if (!plot) {
       sfx.error();
       this.ui.shakeCounter('coins');
-      this.ui.floatText(screen.x, screen.y - 60, 'Не хватает монет', '#ff8a7a');
+      this.ui.noMoney(screen.x, screen.y - 60);
       return;
     }
     this.ui.floatText(screen.x, screen.y - 80, `−${cost}`, '#ffe066', 'i_coin');
@@ -1267,6 +1332,7 @@ export class FarmScene extends Phaser.Scene {
       if (!this.intro) state.tickMushrooms(randomMushroomSpot);
       for (const v of this.mushViews.values()) this.refreshMushroom(v);
       this.meadow.tick();
+      this.updateCues();
     }
   }
 }

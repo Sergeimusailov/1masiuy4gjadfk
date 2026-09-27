@@ -33,10 +33,6 @@ export class UIScene extends Phaser.Scene {
   /** downTime последнего нажатия, пойманного интерфейсом: ферма его игнорирует. */
   lastUiDown = -1;
   pickerOpen = false;
-  /** Подсказка про лес нужна только пока игрок не нашёл первый гриб. */
-  foundMushroom = false;
-  /** Подсказка про луг — пока игрок ни разу не посеял траву и не собрал продукт. */
-  visitedMeadow = false;
 
   private farm!: FarmScene;
   private counters = {} as Record<Counter, CounterView>;
@@ -49,7 +45,6 @@ export class UIScene extends Phaser.Scene {
   private buildBtn!: Phaser.GameObjects.Container;
   private buildCost!: Phaser.GameObjects.Text;
   private cancelBtn!: Phaser.GameObjects.Container;
-  private hint!: Phaser.GameObjects.Text;
   private picker: Phaser.GameObjects.Container | null = null;
   private confetti!: Phaser.GameObjects.Particles.ParticleEmitter;
   private sparkle!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -80,7 +75,6 @@ export class UIScene extends Phaser.Scene {
     this.buildLevel();
     this.buildCounters();
     this.buildButtons();
-    this.hint = this.txt(0, 0, '', 17).setAlpha(0);
 
     this.sparkle = this.add.particles(0, 0, 'spark', {
       emitting: false,
@@ -110,11 +104,7 @@ export class UIScene extends Phaser.Scene {
       this.syncCounter('mushrooms');
       this.syncCounter('milk');
       this.syncCounter('wool');
-      this.updateHint();
     });
-    state.on('plot', () => this.updateHint());
-    state.on('mushrooms:spawn', () => this.updateHint());
-    state.on('animal', () => this.updateHint());
     state.on('xp', () => this.syncXp());
     state.on('levelup', (lvl: number) => this.time.delayedCall(700, () => this.celebrate(lvl)));
 
@@ -125,7 +115,6 @@ export class UIScene extends Phaser.Scene {
       o.setAlpha(0).setY(y - 30);
       this.tweens.add({ targets: o, alpha: 1, y, delay: 1300 + i * 90, duration: 450, ease: 'Back.Out' });
     });
-    this.time.delayedCall(2000, () => this.updateHint());
   }
 
   // ---------------------------------------------------------------- HUD
@@ -246,15 +235,15 @@ export class UIScene extends Phaser.Scene {
   }
 
   private buildButtons() {
-    const icon = this.add.image(-62, -4, 'i_plot').setScale(0.55);
-    const label = this.txt(4, -9, 'Грядка', 20);
-    const coin = this.add.image(-6, 15, 'i_coin').setScale(0.24);
-    this.buildCost = this.txt(18, 15, String(state.plotCost), 15, '#ffe066').setOrigin(0, 0.5);
-    this.buildBtn = this.makeButton('btn_green', 180, 64, [icon, label, coin, this.buildCost], () => {
+    // компактная кнопка без слов: [грядка] [монета] [цена]
+    const icon = this.add.image(-34, -2, 'i_plot').setScale(0.52);
+    const coin = this.add.image(10, 0, 'i_coin').setScale(0.3);
+    this.buildCost = this.txt(26, 1, String(state.plotCost), 20, '#ffe066').setOrigin(0, 0.5);
+    this.buildBtn = this.makeButton('btn_green', 132, 60, [icon, coin, this.buildCost], () => {
       if (state.coins < state.plotCost) {
         sfx.error();
         this.shakeCounter('coins');
-        this.floatText(this.buildBtn.x, this.buildBtn.y - 50, 'Не хватает монет', '#ff8a7a');
+        this.noMoney(this.buildBtn.x, this.buildBtn.y - 60);
         return;
       }
       sfx.click();
@@ -262,8 +251,7 @@ export class UIScene extends Phaser.Scene {
       this.farm.enterBuild();
     });
 
-    const x = this.txt(0, 0, 'Отмена', 20);
-    this.cancelBtn = this.makeButton('btn_red', 150, 58, [x], () => {
+    this.cancelBtn = this.makeButton('btn_red', 76, 60, [this.add.image(0, -2, 'i_close').setScale(0.5)], () => {
       sfx.click();
       this.farm.exitBuild();
     }).setVisible(false);
@@ -279,41 +267,40 @@ export class UIScene extends Phaser.Scene {
     if (on) {
       this.cancelBtn.setScale(0.6);
       this.tweens.add({ targets: this.cancelBtn, scale: 1, duration: 300, ease: 'Back.Out' });
-      this.showHint('Выберите свободную клетку для новой грядки');
-    } else {
-      this.updateHint();
     }
     this.updateBuildCost();
   }
 
-  // ---------------------------------------------------------------- подсказки
+  // ---------------------------------------------------------------- подсказки без слов
 
-  private showHint(text: string) {
-    if (this.hint.text === text && this.hint.alpha > 0) return;
-    this.tweens.killTweensOf(this.hint);
-    if (!text) {
-      this.tweens.add({ targets: this.hint, alpha: 0, duration: 200 });
-      return;
-    }
-    this.hint.setText(text).setAlpha(0).setScale(0.8);
-    this.tweens.add({ targets: this.hint, alpha: 1, scale: 1, duration: 350, ease: 'Back.Out' });
+  /** «Не хватает монет»: монетка с красным знаком «нельзя», вздрагивает и тает. */
+  noMoney(x: number, y: number) {
+    const box = this.add.container(x, y, [this.add.image(0, 0, 'i_coin').setScale(0.42), this.add.image(0, 0, 'i_no').setScale(0.62)]).setScale(0.3);
+    this.tweens.add({ targets: box, scale: 1, duration: 260, ease: 'Back.Out' });
+    this.tweens.add({ targets: box, angle: { from: -12, to: 12 }, duration: 70, yoyo: true, repeat: 3, delay: 260 });
+    this.tweens.add({ targets: box, alpha: 0, y: y - 30, duration: 400, delay: 1000, onComplete: () => box.destroy() });
   }
 
-  updateHint() {
-    if (this.cancelBtn?.visible) return;
-    const anyPlanted = state.plots.some((p) => p.crop);
-    const anyRipe = state.plots.some((p) => p.crop && state.growth(p) >= 1);
-    const stock =
-      state.inventory.wheat + state.inventory.carrot + state.mushroomCount + state.inventory.milk + state.inventory.wool;
-    const ripeMushrooms = state.mushrooms.some((m) => state.mushroomGrowth(m) >= 1);
-    let text = '';
-    if (!anyPlanted && stock === 0) text = 'Нажмите на пустую грядку, чтобы посадить';
-    else if (anyRipe) text = 'Урожай созрел — нажмите на грядку!';
-    else if (stock > 0) text = 'Нажмите на амбар, чтобы продать урожай';
-    else if (ripeMushrooms && !this.foundMushroom) text = 'За мостиком в лесу выросли грибы — поищите!';
-    else if (!this.visitedMeadow && state.animals.some((a) => a.fedAt === null))
-      text = 'На лугу справа голодные коровы и овечки — посейте им траву';
-    this.showHint(text);
+  /**
+   * Сколько осталось расти: круг с иконкой, который заполняется по часовой стрелке.
+   * Понятно без чтения — как часики в мобильных играх.
+   */
+  progress(x: number, y: number, frac: number, icon: string) {
+    const r = 30;
+    const g = this.add.graphics();
+    g.fillStyle(0x3a2616, 0.75);
+    g.fillCircle(0, 0, r + 6);
+    g.fillStyle(0xffffff, 0.25);
+    g.fillCircle(0, 0, r);
+    g.fillStyle(0x8fe85a, 1);
+    g.slice(0, 0, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Phaser.Math.Clamp(frac, 0.02, 1), false);
+    g.fillPath();
+    g.lineStyle(3, 0xffffff, 0.9);
+    g.strokeCircle(0, 0, r + 4);
+    const ic = this.add.image(0, 0, icon).setScale(0.42);
+    const box = this.add.container(x, y, [g, ic]).setScale(0.3);
+    this.tweens.add({ targets: box, scale: 1, duration: 280, ease: 'Back.Out' });
+    this.tweens.add({ targets: box, alpha: 0, y: y - 30, duration: 350, delay: 1300, onComplete: () => box.destroy() });
   }
 
   // ---------------------------------------------------------------- выбор культуры
@@ -331,11 +318,15 @@ export class UIScene extends Phaser.Scene {
       if (unlocked) {
         const coin = this.add.image(-12, 38, 'i_coin').setScale(0.22);
         const cost = this.txt(4, 38, String(def.seedCost), 15, state.coins >= def.seedCost ? '#ffe066' : '#ff8a7a').setOrigin(0, 0.5);
-        const time = this.txt(0, -40, `${def.growMs / 1000}с`, 12);
-        parts.push(coin, cost, time);
+        parts.push(coin, cost);
       } else {
+        // закрыто: замок и звезда уровня, на котором откроется
         icon.setTint(0x777777).setAlpha(0.7);
-        parts.push(this.add.image(16, 14, 'i_lock').setScale(0.5), this.txt(0, 38, `Ур. ${def.unlockLevel}`, 13));
+        parts.push(
+          this.add.image(16, 14, 'i_lock').setScale(0.5),
+          this.add.image(0, 40, 'i_star').setScale(0.3),
+          this.txt(0, 42, String(def.unlockLevel), 13),
+        );
       }
       const box = this.add.container(x + (i - 0.5) * 84, y - 70, parts);
       box.setSize(70, 70).setInteractive({ useHandCursor: true });
@@ -521,9 +512,7 @@ export class UIScene extends Phaser.Scene {
     this.tweens.add({ targets: rays, scale: 9, alpha: { from: 1, to: 0.6 }, angle: 90, duration: 900, ease: 'Cubic.Out' });
     const star = this.add.image(0, -20, 'i_star').setScale(1.4);
     const num = this.txt(0, -14, String(level), 44);
-    const ribbon = this.add.nineslice(0, 52, 'btn_orange', undefined, 560, 110, 44, 44, 44, 44).setScale(0.5);
-    const title = this.txt(0, 50, 'Новый уровень!', 26);
-    const banner = this.add.container(cx, cy, [ribbon, title, star, num]).setScale(0);
+    const banner = this.add.container(cx, cy, [star, num]).setScale(0);
     this.tweens.add({ targets: banner, scale: 1, duration: 600, ease: 'Back.Out' });
     this.tweens.add({ targets: star, angle: { from: -10, to: 10 }, duration: 600, yoyo: true, repeat: 2, ease: 'Sine.InOut' });
     for (let i = 0; i < 3; i++) this.time.delayedCall(i * 220, () => this.confetti.explode(60, cx + (i - 1) * this.W * 0.3, this.H + 10));
@@ -531,7 +520,13 @@ export class UIScene extends Phaser.Scene {
       this.tweens.add({ targets: [banner, rays], scale: 0, alpha: 0, duration: 350, ease: 'Back.In', onComplete: () => (banner.destroy(), rays.destroy()) });
       this.drawXp();
       const unlocked = (Object.values(CROPS) as Array<(typeof CROPS)[CropId]>).filter((c) => c.unlockLevel === level);
-      for (const c of unlocked) this.floatText(cx, cy, `Открыто: ${c.name}!`, '#b8ff8a');
+      // открылась новая культура: её иконка выпрыгивает с искрами и улетает вниз, к полю
+      for (const c of unlocked) {
+        const ic = this.add.image(cx, cy, c.id === 'wheat' ? 'i_wheat' : 'i_carrot').setScale(0);
+        this.sparkle.explode(16, cx, cy);
+        this.tweens.add({ targets: ic, scale: 1.2, duration: 450, ease: 'Back.Out' });
+        this.tweens.add({ targets: ic, y: this.H * 0.7, scale: 0, delay: 1300, duration: 500, ease: 'Back.In', onComplete: () => ic.destroy() });
+      }
     });
   }
 
@@ -550,8 +545,5 @@ export class UIScene extends Phaser.Scene {
     );
     this.buildBtn.setPosition(W / 2, bottom);
     this.cancelBtn.setPosition(W / 2, bottom);
-    this.hint.setPosition(W / 2, bottom - 62);
-    this.hint.setWordWrapWidth(W - 40);
-    this.hint.setAlign('center');
   }
 }
