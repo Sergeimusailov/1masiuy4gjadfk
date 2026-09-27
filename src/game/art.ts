@@ -1201,6 +1201,19 @@ function drawStump(ctx: Ctx, cx: number, cy: number) {
   ellipse(ctx, cx - 16, cy - 16, 8, 5, 'rgba(110,170,60,0.8)');
 }
 
+/** Мордочка коровы для указателя на луг. */
+function drawCowFace(ctx: Ctx, x: number, y: number, k: number) {
+  ellipse(ctx, x - 14 * k, y - 8 * k, 7 * k, 3.5 * k, '#e6d8cc', -0.4);
+  ellipse(ctx, x + 14 * k, y - 8 * k, 7 * k, 3.5 * k, '#e6d8cc', 0.4);
+  ellipse(ctx, x, y, 14 * k, 16 * k, '#ffffff');
+  ellipse(ctx, x - 5 * k, y - 6 * k, 6 * k, 5 * k, '#2e2622');
+  ellipse(ctx, x, y + 9 * k, 12 * k, 8 * k, '#ffb3c1');
+  circle(ctx, x - 4 * k, y + 9 * k, 1.8 * k, '#b8586a');
+  circle(ctx, x + 4 * k, y + 9 * k, 1.8 * k, '#b8586a');
+  circle(ctx, x - 5 * k, y - 3 * k, 2.4 * k, '#1e1e1e');
+  circle(ctx, x + 6 * k, y - 3 * k, 2.4 * k, '#1e1e1e');
+}
+
 function drawSign(ctx: Ctx, cx: number, cy: number, label = 'Лес', right = false) {
   softShadow(ctx, cx + 6, cy - 2, 26, 9, 0.28);
   ctx.fillStyle = lingrad(ctx, cx - 5, 0, cx + 5, 0, ['#9a6a3e', '#6e4526']);
@@ -1227,7 +1240,10 @@ function drawSign(ctx: Ctx, cx: number, cy: number, label = 'Лес', right = fa
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if (right) ctx.scale(-1, 1);
-  ctx.fillText(label, right ? -12 : 12, 1);
+  // на доске рисунок вместо слова: гриб — лес, мордочка коровы — луг
+  const ix = right ? -12 : 12;
+  if (label === 'Лес') drawMushroom(ctx, 'porcini', 3, ix, 17, false);
+  else drawCowFace(ctx, ix, 1, 0.8);
   ctx.restore();
   // у столбика: гриб (лес) или клевер (луг)
   if (!right) drawMushroom(ctx, 'chanterelle', 2, cx + 18, cy + 2, false);
@@ -1593,11 +1609,13 @@ function drawMilkIcon(ctx: Ctx) {
   ctx.fillStyle = '#5fb0ff';
   rrect(ctx, 26, 56, 44, 20, 4);
   ctx.fill();
+  // капля молока на этикетке
+  ctx.beginPath();
+  ctx.moveTo(48, 58);
+  ctx.quadraticCurveTo(55, 67, 48, 73);
+  ctx.quadraticCurveTo(41, 67, 48, 58);
   ctx.fillStyle = '#ffffff';
-  ctx.font = '800 13px Rubik, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('МУ', 48, 67);
+  ctx.fill();
   ellipse(ctx, 32, 46, 3, 9, 'rgba(255,255,255,0.9)');
 }
 
@@ -2031,6 +2049,32 @@ export function generateArt(scene: Phaser.Scene) {
   make(scene, 'i_carrot', 96, 96, null, drawCarrotIcon);
   make(scene, 'i_plot', 96, 96, null, drawPlotIcon);
   make(scene, 'i_lock', 64, 64, null, drawLock);
+  // «нельзя»: красный круг с косой чертой
+  make(scene, 'i_no', 96, 96, null, (c) => {
+    c.strokeStyle = '#e8322a';
+    c.lineWidth = 10;
+    c.shadowColor = 'rgba(0,0,0,0.35)';
+    c.shadowBlur = 4;
+    c.beginPath();
+    c.arc(48, 48, 36, 0, Math.PI * 2);
+    c.moveTo(22, 22);
+    c.lineTo(74, 74);
+    c.stroke();
+  });
+  // крестик «отмена»
+  make(scene, 'i_close', 96, 96, null, (c) => {
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = 14;
+    c.lineCap = 'round';
+    c.shadowColor = 'rgba(90,20,15,0.6)';
+    c.shadowOffsetY = 3;
+    c.beginPath();
+    c.moveTo(28, 28);
+    c.lineTo(68, 68);
+    c.moveTo(68, 28);
+    c.lineTo(28, 68);
+    c.stroke();
+  });
   make(scene, 'btn_green', 120, 120, null, (c) => drawButton(c, '#8fe85a', '#42ab2c', '#2a7a1b', '#1f5d14'));
   make(scene, 'btn_orange', 120, 120, null, (c) => drawButton(c, '#ffc15a', '#f58a1f', '#b8580d', '#8a410a'));
   make(scene, 'btn_red', 120, 120, null, (c) => drawButton(c, '#ff8a7a', '#e2453a', '#a82a22', '#7a1d18'));

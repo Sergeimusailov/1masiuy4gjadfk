@@ -151,11 +151,9 @@ export class Meadow {
       if (!state.sow(p)) {
         sfx.error();
         ui.shakeCounter('coins');
-        ui.floatText(s.x, s.y - 60, 'Не хватает монет', '#ff8a7a');
+        ui.noMoney(s.x, s.y - 60);
         return;
       }
-      ui.visitedMeadow = true;
-      ui.updateHint();
       sfx.plant();
       this.scene.fx.seeds.explode(16, c.x, c.y - 10);
       this.scene.fx.dust.explode(6, c.x, c.y);
@@ -163,10 +161,12 @@ export class Meadow {
       this.scene.tweens.add({ targets: view.base, scaleX: 1.06, scaleY: 1.06, duration: 90, yoyo: true });
       return;
     }
-    const left = state.grassMsLeft(p);
     sfx.click();
-    if (left > 0) ui.floatText(s.x, s.y - 60, `Трава растёт · ${fmt(left)}`, '#ffffff');
-    else ui.floatText(s.x, s.y - 60, 'Трава готова — скоро придут поесть', '#ffffff');
+    if (state.grassGrowth(p) < 1) ui.progress(s.x, s.y - 70, state.grassGrowth(p), 'i_grass');
+    else if (view.grass) {
+      // трава готова: колышется, а голодные животные уже идут к ней
+      this.scene.tweens.add({ targets: view.grass, scaleY: 1.15, duration: 120, yoyo: true });
+    }
   }
 
   // ---------------------------------------------------------------- животные
@@ -354,12 +354,9 @@ export class Meadow {
         // голодное: пузырь с травой вздрагивает, пустые пастбища вспыхивают
         this.scene.tweens.add({ targets: v.bubble, angle: { from: -14, to: 14 }, duration: 70, yoyo: true, repeat: 3, onComplete: () => v.bubble.setAngle(0) });
         this.flashSowHints();
-      } else ui.floatText(s.x, s.y, `${def.productName} через ${fmt(state.produceMsLeft(v.a))}`, '#ffffff');
+      } else ui.progress(s.x, s.y, state.produce(v.a), `i_${def.product}`);
       return;
     }
-    ui.visitedMeadow = true;
-    ui.updateHint();
-    ui.floatText(s.x, s.y - 10, `${def.productName}!`, '#ffffff');
     ui.flyIcons(s.x, s.y + 30, 'i_star', 'xp', 1, 200);
     this.scene.fx.stars.explode(14, v.x, v.y - 70);
     if (v.a.kind === 'sheep') {
@@ -414,9 +411,4 @@ export class Meadow {
 /** Лёгкое покачивание пузыря без отдельного твина на каждое животное. */
 function bob(seed: number) {
   return Math.sin(performance.now() / 350 + seed) * 6;
-}
-
-function fmt(ms: number) {
-  const s = Math.ceil(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

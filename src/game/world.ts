@@ -89,7 +89,7 @@ export const DECOR: Array<{ kind: DecorKind; tx: number; ty: number }> = [
   { kind: 'rock', tx: 6, ty: 10 },
   { kind: 'rock', tx: 3, ty: 6 },
   { kind: 'sign', tx: 5, ty: 10 },
-  { kind: 'signMeadow', tx: 10, ty: 7 },
+  { kind: 'signMeadow', tx: 10, ty: 5 },
 ];
 
 /** Тропинка: от дома к амбару и вниз к мельнице. */
