@@ -1700,6 +1700,90 @@ function drawWhale(ctx: Ctx) {
   POINTS.whaleSpout = { x: 236 - 170, y: 44 - 110 };
 }
 
+// ---------- летающая тарелка ----------
+
+function drawUfo(ctx: Ctx) {
+  const cx = 140;
+  const cy = 110;
+  // купол с пришельцем
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy - 22, 56, 50, 0, Math.PI, 0);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle = radgrad(ctx, cx, cy - 30, 5, 60, ['rgba(200,255,255,0.75)', 'rgba(120,220,240,0.55)', 'rgba(60,150,190,0.6)'], cx - 18, cy - 50);
+  ctx.fillRect(cx - 60, cy - 80, 120, 70);
+  // пришелец
+  ellipse(ctx, cx, cy - 20, 18, 14, '#7ee05a');
+  ellipse(ctx, cx, cy - 40, 22, 20, radgrad(ctx, cx, cy - 40, 2, 22, ['#b8ff8a', '#6cc84a'], cx - 6, cy - 48));
+  ellipse(ctx, cx - 9, cy - 40, 7, 9, '#141414', -0.3);
+  ellipse(ctx, cx + 9, cy - 40, 7, 9, '#141414', 0.3);
+  circle(ctx, cx - 11, cy - 43, 2.2, '#ffffff');
+  circle(ctx, cx + 7, cy - 43, 2.2, '#ffffff');
+  ctx.strokeStyle = '#6cc84a';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, cy - 58);
+  ctx.lineTo(cx - 14, cy - 70);
+  ctx.moveTo(cx + 8, cy - 58);
+  ctx.lineTo(cx + 14, cy - 70);
+  ctx.stroke();
+  circle(ctx, cx - 14, cy - 71, 4, '#ff5d8a');
+  circle(ctx, cx + 14, cy - 71, 4, '#ff5d8a');
+  ctx.restore();
+  ellipse(ctx, cx - 22, cy - 48, 10, 18, 'rgba(255,255,255,0.45)', 0.4);
+  // диск
+  ellipse(ctx, cx, cy + 10, 124, 30, '#4d5968');
+  ellipse(ctx, cx, cy, 128, 32, lingrad(ctx, 0, cy - 32, 0, cy + 32, ['#f4f8fc', '#c3ced9', '#8392a3', '#5a6776']));
+  ellipse(ctx, cx, cy - 8, 100, 16, 'rgba(255,255,255,0.35)');
+  ctx.strokeStyle = '#3e4955';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 2, 118, 26, 0, 0.05, Math.PI - 0.05);
+  ctx.stroke();
+  // огоньки по ободу
+  const cols = ['#ffe066', '#6cf0ff', '#ff7ab8', '#ffe066', '#6cf0ff', '#ff7ab8', '#ffe066'];
+  cols.forEach((c, i) => {
+    const a = Math.PI * (0.12 + (i / (cols.length - 1)) * 0.76);
+    const x = cx + Math.cos(a) * 106;
+    const y = cy + 6 + Math.sin(a) * 20;
+    circle(ctx, x, y, 9, radgrad(ctx, x, y, 0, 9, ['#ffffff', c, 'rgba(0,0,0,0)']));
+  });
+  // люк снизу
+  ellipse(ctx, cx, cy + 30, 34, 9, '#39424e');
+  ellipse(ctx, cx, cy + 30, 26, 6, 'rgba(210,255,160,0.9)');
+}
+
+/** Луч притяжения: светлый конус, расширяющийся к земле. */
+function drawBeam(ctx: Ctx) {
+  const w0 = 60;
+  const w1 = 220;
+  const h = 480;
+  ctx.beginPath();
+  ctx.moveTo(120 - w0 / 2, 0);
+  ctx.lineTo(120 + w0 / 2, 0);
+  ctx.lineTo(120 + w1 / 2, h);
+  ctx.lineTo(120 - w1 / 2, h);
+  ctx.closePath();
+  ctx.fillStyle = lingrad(ctx, 0, 0, 0, h, ['rgba(220,255,170,0.7)', 'rgba(190,255,150,0.35)', 'rgba(170,255,140,0.2)']);
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  // светлые кольца внутри луча
+  for (let y = 30; y < h; y += 46) {
+    const w = w0 + ((w1 - w0) * y) / h;
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(120, y, w / 2, 8, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = lingrad(ctx, 120 - w1 / 2, 0, 120 + w1 / 2, 0, ['rgba(255,255,255,0)', 'rgba(255,255,255,0.35)', 'rgba(255,255,255,0)']);
+  ctx.fillRect(0, 0, 240, h);
+  ctx.restore();
+  ellipse(ctx, 120, h - 6, w1 / 2, 20, 'rgba(220,255,170,0.45)');
+}
+
 function drawRipple(ctx: Ctx) {
   ctx.strokeStyle = 'rgba(255,255,255,0.8)';
   ctx.lineWidth = 5;
@@ -1976,6 +2060,8 @@ export function generateArt(scene: Phaser.Scene) {
   make(scene, 'whale', 340, 170, { x: 170, y: 110 }, drawWhale);
   make(scene, 'ripple', 300, 90, { x: 150, y: 45 }, drawRipple);
   make(scene, 'rainbow', 260, 140, { x: 130, y: 130 }, drawRainbow);
+  make(scene, 'ufo', 280, 170, { x: 140, y: 110 }, drawUfo);
+  make(scene, 'beam', 240, 500, { x: 120, y: 0 }, drawBeam);
   for (const k of ['champignon', 'chanterelle', 'porcini'] as const)
     for (const st of [1, 2, 3])
       make(scene, `mush_${k}${st}`, 160, 150, { x: 80, y: 132 }, (c) => {

@@ -9,6 +9,7 @@ import { ANIMALS, SOW_COST, type Animal, type Pasture } from '../game/state';
 import { MEADOW_WALK, iso } from '../game/world';
 import { D } from './depth';
 import type { FarmScene } from './FarmScene';
+import type { Abductee } from './ufo';
 
 type Img = Phaser.GameObjects.Image;
 
@@ -39,6 +40,10 @@ interface AnimalView {
   ready: boolean;
   /** Чем сейчас подсвечено: красноватым (голодное) или золотым (готово). */
   glowMode: 'none' | 'hungry' | 'ready';
+  /** Высота над землёй в луче тарелки. */
+  lift: number;
+  /** Сейчас на борту летающей тарелки. */
+  away: boolean;
 }
 
 const grassStage = (g: number) => (g >= 1 ? 3 : g >= 0.45 ? 2 : g > 0 ? 1 : 0);
@@ -78,7 +83,7 @@ export class Meadow {
           type: 'random',
           source: {
             getRandomPoint: (pt: Phaser.Types.Math.Vector2Like) => {
-              const ready = this.animals.filter((v) => v.ready);
+              const ready = this.animals.filter((v) => v.ready && !v.away && v.lift === 0);
               const v = ready.length ? Phaser.Utils.Array.GetRandom(ready) : null;
               pt.x = v ? v.x + Phaser.Math.Between(-60, 60) : -99999;
               pt.y = v ? v.y - Phaser.Math.Between(20, 110) : -99999;
@@ -202,6 +207,8 @@ export class Meadow {
       wool: -1,
       ready: false,
       glowMode: 'none',
+      lift: 0,
+      away: false,
     };
     this.animals.push(view);
     this.refreshAnimal(view, false);
@@ -210,7 +217,7 @@ export class Meadow {
 
   /** Главное решение животного: идти есть, погулять или постоять. */
   private think(v: AnimalView) {
-    if (v.mode !== 'idle') return;
+    if (v.mode !== 'idle' || v.away || v.lift > 0) return;
     if (v.a.fedAt === null) {
       const food = [...this.pastures.values()].find((p) => p.claimedBy === null && state.grassGrowth(p.p) >= 1);
       if (food) {
@@ -293,7 +300,7 @@ export class Meadow {
         }
       }
     }
-    const hungry = v.a.fedAt === null && v.mode !== 'eat';
+    const hungry = v.a.fedAt === null && v.mode !== 'eat' && !v.away && v.lift === 0;
     if (ready && !v.ready && animate) this.scene.fx.stars.explode(8, v.x, v.y - 70);
     v.ready = ready;
     // сияние: золотое — можно собирать, красноватое пульсирующее — голодное
@@ -329,6 +336,7 @@ export class Meadow {
     let best: AnimalView | null = null;
     let bestD = radius;
     for (const v of this.animals) {
+      if (v.away || v.lift > 0) continue;
       const d = Phaser.Math.Distance.Between(wx, wy, v.x, v.y - (v.a.kind === 'cow' ? 80 : 60));
       if (d < bestD) {
         bestD = d;
@@ -398,10 +406,31 @@ export class Meadow {
   }
 
   /** Каждый кадр: позиции, тени, глубина, покачивание пузыря голода. */
+  /** Животные луга, которых может утащить летающая тарелка. */
+  abductees(): Abductee[] {
+    return this.animals.map((v) => ({
+      ref: v,
+      kind: v.a.kind,
+      free: () => (v.mode === 'idle' || v.mode === 'walk') && !v.away && v.lift === 0,
+      freeze: () => {
+        this.scene.tweens.killTweensOf(v);
+        v.hop = 0;
+        v.mode = 'react';
+        for (const p of this.pastures.values()) if (p.claimedBy === v.a.id) p.claimedBy = null;
+      },
+      release: () => {
+        v.mode = 'idle';
+        this.rest(v);
+      },
+      landingSpot: randomWalkPoint,
+    }));
+  }
+
   update() {
     for (const v of this.animals) {
-      v.img.setPosition(v.x, v.y - v.hop).setDepth(v.y);
-      v.shadow.setPosition(v.x, v.y).setDepth(v.y - 1);
+      v.img.setVisible(!v.away).setPosition(v.x, v.y - v.hop - v.lift);
+      v.img.setDepth(v.lift > 0 ? D.fx - 4 : v.y);
+      v.shadow.setVisible(!v.away).setPosition(v.x, v.y).setDepth(v.y - 1).setAlpha(0.28 * Math.max(0, 1 - v.lift / 300));
       const top = v.a.kind === 'cow' ? 215 : 190;
       v.bubble.setPosition(v.x + (v.img.flipX ? -30 : 30), v.y - v.hop - top + bob(v.a.id));
     }
