@@ -117,7 +117,7 @@ function voice(o: {
  * Настоящие записи лежат в public/sounds. Если файла нет или он не загрузился,
  * играет синтезированный вариант, так что игра звучит в любом случае.
  */
-const SAMPLE_FILES = { moo: 'sounds/moo.mp3', baa: 'sounds/baa.mp3' } as const;
+const SAMPLE_FILES = { moo: 'sounds/moo.mp3', baa: 'sounds/baa.mp3', cluck: 'sounds/cluck.mp3' } as const;
 type SampleId = keyof typeof SAMPLE_FILES;
 const samples = new Map<SampleId, AudioBuffer | null>();
 
@@ -153,8 +153,7 @@ function playSample(id: SampleId, vol = 0.9) {
 export const sfx = {
   unlock: () => {
     audio();
-    void loadSample('moo');
-    void loadSample('baa');
+    for (const id of Object.keys(SAMPLE_FILES) as SampleId[]) void loadSample(id);
   },
   click: () => tone(660, 0.08, 'triangle', 0, 0.5, 880),
   pop: () => tone(420, 0.14, 'sine', 0, 0.8, 900),
@@ -180,6 +179,7 @@ export const sfx = {
     tone(180, 0.18, 'square', 0.1, 0.15);
   },
   cluck: () => {
+    if (playSample('cluck', 0.8)) return;
     tone(700, 0.07, 'square', 0, 0.12, 500);
     tone(820, 0.09, 'square', 0.1, 0.12, 560);
   },
