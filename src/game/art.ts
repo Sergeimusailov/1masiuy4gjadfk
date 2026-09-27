@@ -3,7 +3,7 @@
 // здесь были бы PNG/атласы от художника — остальной код от этого не зависит.
 
 import Phaser from 'phaser';
-import { TW, TH, N } from './world';
+import { TW, TH, ISLANDS } from './world';
 
 type Ctx = CanvasRenderingContext2D;
 type Pt = { x: number; y: number };
@@ -143,9 +143,33 @@ function leaf(ctx: Ctx, x: number, y: number, a: number, len: number, wid: numbe
 
 // ---------- земля ----------
 
-const GRASS = '#7cc444';
+const GRASS = '#7cc444'; // трава фермы (подложка тропинки)
 
-function drawGrass(ctx: Ctx, variant: number) {
+interface GrassStyle {
+  base: string;
+  blades: string[];
+  flowers: string[];
+  litter?: string[];
+}
+
+const FARM_GRASS: GrassStyle = {
+  base: '#7cc444',
+  blades: ['#8fd352', '#6bb536', '#9ada5c', '#62a832'],
+  flowers: ['#fff7e0', '#ffd84a', '#ff9ec7'],
+};
+const FOREST_GRASS: GrassStyle = {
+  base: '#4d9434',
+  blades: ['#3f7f2a', '#5aa33c', '#36722a', '#61ad42'],
+  flowers: [],
+  litter: ['#8a5a2b', '#b07a3a', '#6e4a22', '#c9913f'],
+};
+const CLEARING_GRASS: GrassStyle = {
+  base: '#86c94a',
+  blades: ['#9ad65a', '#74b83c', '#a6e064', '#6aad38'],
+  flowers: ['#ffffff', '#fff27a', '#c9a7ff'],
+};
+
+function drawGrass(ctx: Ctx, variant: number, style: GrassStyle = FARM_GRASS) {
   ground(ctx, 130, 2);
   poly(ctx, [
     { x: -0.012, y: -0.012 },
@@ -153,12 +177,12 @@ function drawGrass(ctx: Ctx, variant: number) {
     { x: 1.012, y: 1.012 },
     { x: -0.012, y: 1.012 },
   ]);
-  ctx.fillStyle = GRASS;
+  ctx.fillStyle = style.base;
   ctx.fill();
   ctx.clip();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // мелкая фактура: травинки и пятнышки
-  const blades = ['#8fd352', '#6bb536', '#9ada5c', '#62a832'];
+  const blades = style.blades;
   for (let i = 0; i < 70 + variant * 10; i++) {
     const u = rnd();
     const v = rnd();
@@ -171,14 +195,24 @@ function drawGrass(ctx: Ctx, variant: number) {
     ctx.lineTo(x + rr(-3, 3), y - rr(4, 9));
     ctx.stroke();
   }
-  if (variant === 2) {
+  // опавшие листья и хвоя в лесу
+  if (style.litter) {
+    for (let i = 0; i < 14; i++) {
+      const u = rnd();
+      const v = rnd();
+      const x = 130 + (u - v) * 128;
+      const y = 2 + (u + v) * 64;
+      ellipse(ctx, x, y, rr(3, 6), rr(1.6, 3), style.litter[(rnd() * style.litter.length) | 0], rr(0, Math.PI));
+    }
+  }
+  if (variant === 2 && style.flowers.length) {
     // пара цветочков
     for (let i = 0; i < 4; i++) {
       const u = rr(0.15, 0.85);
       const v = rr(0.15, 0.85);
       const x = 130 + (u - v) * 128;
       const y = 2 + (u + v) * 64;
-      const col = ['#fff7e0', '#ffd84a', '#ff9ec7'][i % 3];
+      const col = style.flowers[i % style.flowers.length];
       for (let k = 0; k < 5; k++) {
         const a = (k / 5) * Math.PI * 2;
         ellipse(ctx, x + Math.cos(a) * 3.2, y + Math.sin(a) * 2, 2.6, 2, col);
@@ -1037,19 +1071,18 @@ function drawWater(ctx: Ctx) {
 }
 
 /** Тень острова и полоса пены у подножия обрыва (в половинном разрешении). */
-function drawFoam(ctx: Ctx, pad: number) {
+function drawFoam(ctx: Ctx, pad: number, w: number, h: number) {
   const s = 0.5;
-  const half = (N * TW) / 2;
-  const off = { x: (half + pad) * s, y: pad * s };
+  const off = { x: ((h * TW) / 2 + pad) * s, y: pad * s };
   const P = (tx: number, ty: number, dy = 0) => ({
     x: off.x + (tx - ty) * (TW / 2) * s,
     y: off.y + ((tx + ty) * (TH / 2) + dy) * s,
   });
   const diamond = (dy: number, grow: number) => [
     P(-grow, -grow, dy),
-    P(N + grow, -grow, dy),
-    P(N + grow, N + grow, dy),
-    P(-grow, N + grow, dy),
+    P(w + grow, -grow, dy),
+    P(w + grow, h + grow, dy),
+    P(-grow, h + grow, dy),
   ];
   ctx.shadowColor = 'rgba(0,50,80,0.55)';
   ctx.shadowBlur = 60;
@@ -1060,6 +1093,237 @@ function drawFoam(ctx: Ctx, pad: number) {
   poly(ctx, diamond(CLIFF - 6, 0.12), undefined, 'rgba(255,255,255,0.75)', 10);
   ctx.shadowBlur = 0;
   poly(ctx, diamond(CLIFF + 14, 0.28), undefined, 'rgba(255,255,255,0.25)', 5);
+}
+
+
+// ---------- лес ----------
+
+function drawBridge(ctx: Ctx, ox: number, oy: number) {
+  const pt = (u: number, v: number, z = 0) => ({ x: ox + (u - v) * (TW / 2), y: oy + (u + v) * (TH / 2) - z });
+  // толщина настила
+  ground(ctx, ox, oy + 10);
+  ctx.fillStyle = '#5a3a1c';
+  ctx.fillRect(0.14, -0.05, 0.72, 2.1);
+  // доски поперёк пролёта
+  for (let v = -0.05; v < 2.05; v += 0.21) {
+    ground(ctx, ox, oy);
+    ctx.fillStyle = Math.round(v / 0.21) % 2 ? '#b98552' : '#a8743f';
+    ctx.fillRect(0.14, v, 0.72, 0.18);
+    ctx.fillStyle = 'rgba(255,230,180,0.18)';
+    ctx.fillRect(0.14, v, 0.72, 0.035);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // перила: столбики и поручни с обеих сторон
+  for (const u of [0.16, 0.84]) {
+    const posts = [0, 0.7, 1.4, 2.05].map((v) => ({ b: pt(u, v), t: pt(u, v, 30) }));
+    ctx.strokeStyle = '#6e4624';
+    ctx.lineWidth = 7;
+    for (const p of posts) {
+      ctx.beginPath();
+      ctx.moveTo(p.b.x, p.b.y);
+      ctx.lineTo(p.t.x, p.t.y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = '#94643a';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(posts[0].t.x, posts[0].t.y);
+    ctx.lineTo(posts[3].t.x, posts[3].t.y);
+    ctx.stroke();
+  }
+}
+
+function drawFern(ctx: Ctx, cx: number, cy: number) {
+  softShadow(ctx, cx + 6, cy - 2, 46, 14, 0.22);
+  const fronds = 7;
+  for (let i = 0; i < fronds; i++) {
+    const a = -1.25 + (i / (fronds - 1)) * 2.5;
+    const len = rr(38, 52);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(a);
+    ctx.strokeStyle = '#2f6e25';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(len * 0.25, -len * 0.6, len * 0.45, -len);
+    ctx.stroke();
+    for (let k = 1; k < 8; k++) {
+      const t = k / 8;
+      const x = len * 0.45 * t * t + len * 0.1 * t;
+      const y = -len * t;
+      const w = (1 - t) * 11 + 3;
+      leaf(ctx, x, y, -1.2, w, 3, k % 2 ? '#4fa83a' : '#3d9030', 0.1);
+      leaf(ctx, x, y, 1.2, w, 3, k % 2 ? '#5cb847' : '#46a035', 0.1);
+    }
+    ctx.restore();
+  }
+}
+
+function drawStump(ctx: Ctx, cx: number, cy: number) {
+  softShadow(ctx, cx + 8, cy - 2, 44, 16, 0.26);
+  ctx.fillStyle = lingrad(ctx, cx - 26, 0, cx + 26, 0, ['#9a6a3e', '#7a4f2c', '#553519']);
+  ctx.beginPath();
+  ctx.moveTo(cx - 30, cy);
+  ctx.lineTo(cx - 24, cy - 34);
+  ctx.lineTo(cx + 24, cy - 34);
+  ctx.lineTo(cx + 30, cy);
+  ctx.quadraticCurveTo(cx, cy + 10, cx - 30, cy);
+  ctx.fill();
+  // корни
+  for (const [dx, a] of [
+    [-26, -0.9],
+    [22, 0.9],
+  ])
+    leaf(ctx, cx + dx, cy - 4, a, 20, 6, '#6a4424', 0);
+  ellipse(ctx, cx, cy - 34, 24, 10, '#d9b27a');
+  ctx.strokeStyle = 'rgba(120,80,40,0.6)';
+  ctx.lineWidth = 1.6;
+  for (const r of [6, 12, 18]) {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 34, r, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ellipse(ctx, cx - 16, cy - 16, 8, 5, 'rgba(110,170,60,0.8)');
+}
+
+function drawSign(ctx: Ctx, cx: number, cy: number) {
+  softShadow(ctx, cx + 6, cy - 2, 26, 9, 0.28);
+  ctx.fillStyle = lingrad(ctx, cx - 5, 0, cx + 5, 0, ['#9a6a3e', '#6e4526']);
+  ctx.fillRect(cx - 5, cy - 104, 10, 104);
+  // доска-стрелка, указывает влево-вниз, к мосту
+  ctx.save();
+  ctx.translate(cx, cy - 90);
+  ctx.rotate(0.12);
+  ctx.beginPath();
+  ctx.moveTo(-54, 0);
+  ctx.lineTo(-38, -22);
+  ctx.lineTo(48, -22);
+  ctx.lineTo(48, 22);
+  ctx.lineTo(-38, 22);
+  ctx.closePath();
+  ctx.fillStyle = lingrad(ctx, 0, -22, 0, 22, ['#e0b074', '#c08a4c']);
+  ctx.fill();
+  ctx.strokeStyle = '#6e4526';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = '#5a3218';
+  ctx.font = '800 20px Rubik, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Лес', 12, 1);
+  ctx.restore();
+  // маленький гриб у столбика
+  drawMushroom(ctx, 'chanterelle', 2, cx + 18, cy + 2, false);
+}
+
+type MushKind = 'champignon' | 'chanterelle' | 'porcini';
+
+/** Гриб на стадии роста 1–3, основание в (cx, by). */
+function drawMushroom(ctx: Ctx, kind: MushKind, stage: number, cx: number, by: number, tufts = true) {
+  const s = stage === 1 ? 0.4 : stage === 2 ? 0.7 : 1;
+  ellipse(ctx, cx + 3, by, 26 * s + 4, 7 * s + 2, 'rgba(20,40,10,0.3)');
+
+  const champ = (x: number, k: number) => {
+    const w = 8 * k;
+    ctx.fillStyle = lingrad(ctx, x - w, 0, x + w, 0, ['#fffaf0', '#efe4cf', '#cdbd9e']);
+    rrect(ctx, x - w, by - 20 * k, w * 2, 20 * k, 4 * k);
+    ctx.fill();
+    ellipse(ctx, x, by - 18 * k, 21 * k, 7 * k, '#d9c9a6');
+    ctx.beginPath();
+    ctx.ellipse(x, by - 19 * k, 22 * k, 20 * k, 0, Math.PI, 0);
+    ctx.closePath();
+    ctx.fillStyle = radgrad(ctx, x, by - 22 * k, 2, 24 * k, ['#ffffff', '#f6f0e4', '#d8ccb4'], x - 8 * k, by - 32 * k);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,100,70,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    for (let i = 0; i < 5; i++) circle(ctx, x + rr(-12, 12) * k, by - rr(24, 34) * k, 1.3 * k + 0.4, 'rgba(150,120,80,0.45)');
+  };
+
+  const chant = (x: number, y: number, k: number) => {
+    ctx.fillStyle = lingrad(ctx, x - 6 * k, 0, x + 6 * k, 0, ['#ffc14a', '#f29a1a']);
+    ctx.beginPath();
+    ctx.moveTo(x - 3 * k, y);
+    ctx.lineTo(x - 13 * k, y - 22 * k);
+    ctx.lineTo(x + 13 * k, y - 22 * k);
+    ctx.lineTo(x + 3 * k, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(190,100,10,0.45)';
+    ctx.lineWidth = 1.2;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x + i * 1.2 * k, y - 3 * k);
+      ctx.lineTo(x + i * 5 * k, y - 21 * k);
+      ctx.stroke();
+    }
+    // волнистая шляпка-воронка
+    ctx.beginPath();
+    for (let i = 0; i <= 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const r = 1 + Math.sin(a * 5) * 0.08;
+      const px = x + Math.cos(a) * 15 * k * r;
+      const py = y - 23 * k + Math.sin(a) * 6 * k * r;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = radgrad(ctx, x, y - 23 * k, 1, 15 * k, ['#e07d0e', '#ffb830', '#ffd466']);
+    ctx.fill();
+    ctx.strokeStyle = '#d27a0c';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  };
+
+  const porcini = (x: number, k: number) => {
+    ctx.beginPath();
+    ctx.moveTo(x - 10 * k, by - 22 * k);
+    ctx.bezierCurveTo(x - 20 * k, by - 12 * k, x - 16 * k, by, x, by);
+    ctx.bezierCurveTo(x + 16 * k, by, x + 20 * k, by - 12 * k, x + 10 * k, by - 22 * k);
+    ctx.closePath();
+    ctx.fillStyle = lingrad(ctx, x - 18 * k, 0, x + 18 * k, 0, ['#fff6e0', '#eadbb8', '#c4ad82']);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,120,70,0.3)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x - 8 * k + i * 5 * k, by - 18 * k);
+      ctx.lineTo(x - 9 * k + i * 5 * k, by - 6 * k);
+      ctx.stroke();
+    }
+    ellipse(ctx, x, by - 22 * k, 25 * k, 7 * k, '#e6d49a');
+    ctx.beginPath();
+    ctx.ellipse(x, by - 23 * k, 27 * k, 22 * k, 0, Math.PI, 0);
+    ctx.quadraticCurveTo(x, by - 18 * k, x - 27 * k, by - 23 * k);
+    ctx.closePath();
+    ctx.fillStyle = radgrad(ctx, x, by - 28 * k, 2, 28 * k, ['#c07a3e', '#8e4f22', '#5e3014'], x - 9 * k, by - 38 * k);
+    ctx.fill();
+    ellipse(ctx, x - 9 * k, by - 36 * k, 8 * k, 4 * k, 'rgba(255,230,200,0.45)', -0.4);
+  };
+
+  if (kind === 'champignon') {
+    if (stage === 3) champ(cx + 14, 0.62);
+    champ(cx - (stage === 3 ? 6 : 0), s);
+  } else if (kind === 'chanterelle') {
+    if (stage >= 2) chant(cx - 13 * s, by + 1, s * 0.8);
+    chant(cx + 2 * s, by - 2 * s, s);
+    if (stage === 3) chant(cx + 16, by + 2, 0.7);
+  } else {
+    porcini(cx, s);
+  }
+
+  if (tufts) {
+    // травинки перед грибом: он чуть прячется, его нужно высмотреть
+    for (let i = 0; i < 7; i++) {
+      const x = cx + rr(-26, 26);
+      ctx.strokeStyle = i % 2 ? '#4fa83a' : '#3d8c2c';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(x, by + 3);
+      ctx.quadraticCurveTo(x + rr(-3, 3), by - 6, x + rr(-6, 6), by - rr(9, 16));
+      ctx.stroke();
+    }
+  }
 }
 
 // ---------- частицы ----------
@@ -1281,9 +1545,41 @@ export function generateArt(scene: Phaser.Scene) {
   }
   make(scene, 'water', 256, 256, null, drawWater);
   const pad = 260;
-  const foamW = Math.ceil((N * TW + pad * 2) * 0.5);
-  const foamH = Math.ceil((N * TH + pad * 2) * 0.5);
-  make(scene, 'foam', foamW, foamH, { x: foamW / 2, y: pad * 0.5 }, (c) => drawFoam(c, pad));
+  ISLANDS.forEach((isl, i) => {
+    const fw = Math.ceil((((isl.w + isl.h) * TW) / 2 + pad * 2) * 0.5);
+    const fh = Math.ceil((((isl.w + isl.h) * TH) / 2 + pad * 2) * 0.5);
+    make(scene, `foam${i}`, fw, fh, { x: ((isl.h * TW) / 2 + pad) * 0.5, y: pad * 0.5 }, (c) => drawFoam(c, pad, isl.w, isl.h));
+  });
+  for (let v = 0; v < 3; v++) {
+    make(scene, `fgrass${v}`, 260, 132, { x: 130, y: 2 }, (c) => drawGrass(c, v, FOREST_GRASS));
+    make(scene, `cgrass${v}`, 260, 132, { x: 130, y: 2 }, (c) => drawGrass(c, v, CLEARING_GRASS));
+  }
+  make(scene, 'bridge', 3 * 128 + 20, 3 * 64 + 50, { x: 2 * 128 + 10, y: 30 }, (c) => drawBridge(c, 2 * 128 + 10, 30));
+  make(scene, 'fern', 130, 90, { x: 65, y: 80 }, (c) => drawFern(c, 65, 80));
+  make(scene, 'stump', 100, 90, { x: 50, y: 74 }, (c) => drawStump(c, 50, 74));
+  make(scene, 'sign', 130, 150, { x: 60, y: 138 }, (c) => drawSign(c, 60, 138));
+  for (const k of ['champignon', 'chanterelle', 'porcini'] as const)
+    for (const st of [1, 2, 3])
+      make(scene, `mush_${k}${st}`, 160, 150, { x: 80, y: 132 }, (c) => {
+        // грибы рисуются крупнее базового размера, чтобы их было видно на обычном масштабе
+        c.translate(80, 132);
+        c.scale(1.6, 1.6);
+        c.translate(-50, -86);
+        drawMushroom(c, k, st, 50, 86);
+      });
+  // иконки грибов для интерфейса (счётчик и продажа)
+  for (const [key, kind] of [
+    ['i_mush', 'porcini'],
+    ['i_champignon', 'champignon'],
+    ['i_chanterelle', 'chanterelle'],
+    ['i_porcini', 'porcini'],
+  ] as const)
+    make(scene, key, 96, 96, null, (c) => {
+      c.translate(48, 86);
+      c.scale(1.25, 1.25);
+      c.translate(-50, -86);
+      drawMushroom(c, kind, 3, 50, 86, false);
+    });
   make(scene, 'pond', 5 * 128 + 20, 5 * 64 + 20, { x: 2 * 128 + 10, y: 10 }, (c) => drawPond(c, 3, 2));
 
   // постройки: якорь — центр основания
