@@ -163,6 +163,11 @@ const FOREST_GRASS: GrassStyle = {
   flowers: [],
   litter: ['#8a5a2b', '#b07a3a', '#6e4a22', '#c9913f'],
 };
+const MEADOW_GRASS: GrassStyle = {
+  base: '#94d152',
+  blades: ['#a6de62', '#80c142', '#b4e874', '#77b83c'],
+  flowers: ['#ffffff', '#ffe066', '#ffffff'],
+};
 const CLEARING_GRASS: GrassStyle = {
   base: '#86c94a',
   blades: ['#9ad65a', '#74b83c', '#a6e064', '#6aad38'],
@@ -1098,15 +1103,24 @@ function drawFoam(ctx: Ctx, pad: number, w: number, h: number) {
 
 // ---------- лес ----------
 
-function drawBridge(ctx: Ctx, ox: number, oy: number) {
-  const pt = (u: number, v: number, z = 0) => ({ x: ox + (u - v) * (TW / 2), y: oy + (u + v) * (TH / 2) - z });
+/** Плоско на земле: x — поперёк моста, y — вдоль. */
+function bridgeGround(ctx: Ctx, ox: number, oy: number, axis: 'u' | 'v') {
+  if (axis === 'v') ctx.setTransform(TW / 2, TH / 2, -TW / 2, TH / 2, ox, oy);
+  else ctx.setTransform(-TW / 2, TH / 2, TW / 2, TH / 2, ox, oy);
+}
+
+function drawBridge(ctx: Ctx, ox: number, oy: number, axis: 'u' | 'v') {
+  const pt = (across: number, along: number, z = 0) => {
+    const [u, v] = axis === 'v' ? [across, along] : [along, across];
+    return { x: ox + (u - v) * (TW / 2), y: oy + (u + v) * (TH / 2) - z };
+  };
   // толщина настила
-  ground(ctx, ox, oy + 10);
+  bridgeGround(ctx, ox, oy + 10, axis);
   ctx.fillStyle = '#5a3a1c';
   ctx.fillRect(0.14, -0.05, 0.72, 2.1);
   // доски поперёк пролёта
   for (let v = -0.05; v < 2.05; v += 0.21) {
-    ground(ctx, ox, oy);
+    bridgeGround(ctx, ox, oy, axis);
     ctx.fillStyle = Math.round(v / 0.21) % 2 ? '#b98552' : '#a8743f';
     ctx.fillRect(0.14, v, 0.72, 0.18);
     ctx.fillStyle = 'rgba(255,230,180,0.18)';
@@ -1187,14 +1201,15 @@ function drawStump(ctx: Ctx, cx: number, cy: number) {
   ellipse(ctx, cx - 16, cy - 16, 8, 5, 'rgba(110,170,60,0.8)');
 }
 
-function drawSign(ctx: Ctx, cx: number, cy: number) {
+function drawSign(ctx: Ctx, cx: number, cy: number, label = 'Лес', right = false) {
   softShadow(ctx, cx + 6, cy - 2, 26, 9, 0.28);
   ctx.fillStyle = lingrad(ctx, cx - 5, 0, cx + 5, 0, ['#9a6a3e', '#6e4526']);
   ctx.fillRect(cx - 5, cy - 104, 10, 104);
   // доска-стрелка, указывает влево-вниз, к мосту
   ctx.save();
   ctx.translate(cx, cy - 90);
-  ctx.rotate(0.12);
+  ctx.rotate(right ? -0.08 : 0.12);
+  if (right) ctx.scale(-1, 1);
   ctx.beginPath();
   ctx.moveTo(-54, 0);
   ctx.lineTo(-38, -22);
@@ -1211,10 +1226,12 @@ function drawSign(ctx: Ctx, cx: number, cy: number) {
   ctx.font = '800 20px Rubik, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('Лес', 12, 1);
+  if (right) ctx.scale(-1, 1);
+  ctx.fillText(label, right ? -12 : 12, 1);
   ctx.restore();
-  // маленький гриб у столбика
-  drawMushroom(ctx, 'chanterelle', 2, cx + 18, cy + 2, false);
+  // у столбика: гриб (лес) или клевер (луг)
+  if (!right) drawMushroom(ctx, 'chanterelle', 2, cx + 18, cy + 2, false);
+  else for (const [dx, col] of [[16, '#ffffff'], [24, '#ff9ec7'], [10, '#ffffff']] as const) circle(ctx, cx + dx, cy - 4 - (dx % 7), 4, col);
 }
 
 type MushKind = 'champignon' | 'chanterelle' | 'porcini';
@@ -1324,6 +1341,368 @@ function drawMushroom(ctx: Ctx, kind: MushKind, stage: number, cx: number, by: n
       ctx.stroke();
     }
   }
+}
+
+
+// ---------- луг ----------
+
+function drawPasture(ctx: Ctx) {
+  const shape = () => rrect(ctx, 0.08, 0.08, 0.84, 0.84, 0.2);
+  ground(ctx, 130, 10);
+  shape();
+  ctx.fillStyle = '#5f5226';
+  ctx.fill();
+  ground(ctx, 130, 2);
+  shape();
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = lingrad(ctx, 0, 10, 0, 130, ['#9c8a4a', '#86733a', '#6f5f2e']);
+  ctx.fill();
+  ctx.clip();
+  for (let i = 0; i < 30; i++) {
+    const u = rr(0.1, 0.9);
+    const v = rr(0.1, 0.9);
+    ellipse(ctx, 130 + (u - v) * 128, 2 + (u + v) * 64, rr(2, 4), rr(1.4, 2.4), rnd() > 0.5 ? 'rgba(60,45,15,0.35)' : 'rgba(255,240,190,0.25)');
+  }
+  ctx.restore();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/** Трава на пастбище: 1 — ростки, 2 — кустики, 3 — сочная с клевером. */
+function drawMeadowGrass(ctx: Ctx, stage: number) {
+  const spots: Pt[] = [];
+  for (const u of [0.22, 0.4, 0.58, 0.76]) for (const v of [0.22, 0.4, 0.58, 0.76]) spots.push(cropPos(u + rr(-0.03, 0.03), v + rr(-0.03, 0.03)));
+  spots.sort((a, b) => a.y - b.y);
+  const len = stage === 1 ? 12 : stage === 2 ? 26 : 40;
+  for (const p of spots) {
+    const n = stage === 1 ? 3 : 6;
+    for (let k = 0; k < n; k++) {
+      const a = (k - (n - 1) / 2) * 0.28 + rr(-0.08, 0.08);
+      leaf(ctx, p.x, p.y, a, len * rr(0.8, 1.15), stage === 1 ? 2.5 : 3.5, k % 2 ? '#6cc23e' : '#56ab30', 0.12);
+    }
+    if (stage === 3 && rnd() < 0.5) {
+      const fx = p.x + rr(-8, 8);
+      const fy = p.y - len * 0.7;
+      const col = rnd() > 0.5 ? '#ffffff' : '#ff9ec7';
+      for (let i = 0; i < 6; i++) circle(ctx, fx + Math.cos(i) * 3.5, fy + Math.sin(i) * 3.5, 3, col);
+      circle(ctx, fx, fy, 2, '#ffd84a');
+    }
+  }
+}
+
+function drawHay(ctx: Ctx, cx: number, cy: number) {
+  softShadow(ctx, cx + 8, cy - 2, 56, 18, 0.26);
+  // рулон сена лёжа
+  ctx.fillStyle = lingrad(ctx, 0, cy - 60, 0, cy, ['#ffe08a', '#e6b84a', '#b8872a']);
+  rrect(ctx, cx - 44, cy - 58, 70, 56, 26);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(150,100,20,0.5)';
+  ctx.lineWidth = 2;
+  for (let y = cy - 50; y < cy - 6; y += 8) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 36, y);
+    ctx.lineTo(cx + 18, y + rr(-2, 2));
+    ctx.stroke();
+  }
+  ellipse(ctx, cx + 26, cy - 30, 18, 28, '#f2cf6a');
+  ctx.strokeStyle = '#c59a3a';
+  ctx.lineWidth = 2;
+  for (const r of [6, 11, 16]) {
+    ctx.beginPath();
+    ctx.ellipse(cx + 26, cy - 30, r * 0.62, r, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#c0392b';
+  ctx.fillRect(cx - 10, cy - 58, 6, 56);
+}
+
+function drawCow(ctx: Ctx, cx: number, cy: number, eating: boolean) {
+  softShadow(ctx, cx, cy - 2, 62, 14, 0.3);
+  const x0 = cx - 70;
+  const y0 = cy - 124;
+  const X = (x: number) => x0 + x;
+  const Y = (y: number) => y0 + y;
+  // ноги
+  for (const lx of [44, 58, 102, 116]) {
+    ctx.fillStyle = lx === 58 || lx === 116 ? '#e9e4dc' : '#d8d2c8';
+    rrect(ctx, X(lx), Y(92), 11, 30, 4);
+    ctx.fill();
+    ctx.fillStyle = '#3a2e28';
+    ctx.fillRect(X(lx), Y(116), 11, 7);
+  }
+  // хвост
+  ctx.strokeStyle = '#e4ded4';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(X(34), Y(64));
+  ctx.quadraticCurveTo(X(22), Y(80), X(26), Y(100));
+  ctx.stroke();
+  ellipse(ctx, X(26), Y(103), 5, 7, '#2e2622');
+  // туловище с пятнами
+  ctx.save();
+  rrect(ctx, X(30), Y(48), 104, 56, 26);
+  ctx.fillStyle = lingrad(ctx, 0, Y(48), 0, Y(104), ['#ffffff', '#f3efe8', '#d9d2c6']);
+  ctx.fill();
+  ctx.clip();
+  for (const [sx, sy, rx, ry, r] of [
+    [52, 58, 16, 11, 0.3],
+    [96, 72, 14, 12, -0.4],
+    [70, 94, 12, 8, 0.1],
+    [122, 56, 10, 9, 0],
+  ])
+    ellipse(ctx, X(sx), Y(sy), rx, ry, '#2e2622', r);
+  ctx.restore();
+  // вымя
+  ellipse(ctx, X(70), Y(104), 13, 8, '#ffb3c1');
+  for (const tx of [64, 70, 76]) ellipse(ctx, X(tx), Y(111), 2.4, 4, '#ff8fa6');
+  // голова
+  const hx = eating ? 142 : 138;
+  const hy = eating ? 100 : 50;
+  if (eating) {
+    // шея наклонена к траве
+    ctx.fillStyle = '#efe9e0';
+    ctx.beginPath();
+    ctx.moveTo(X(122), Y(54));
+    ctx.lineTo(X(140), Y(86));
+    ctx.lineTo(X(152), Y(92));
+    ctx.lineTo(X(134), Y(56));
+    ctx.fill();
+  }
+  // уши и рожки
+  ellipse(ctx, X(hx - 16), Y(hy - 12), 10, 5, '#e6d8cc', -0.4);
+  ellipse(ctx, X(hx + 16), Y(hy - 14), 10, 5, '#e6d8cc', 0.4);
+  ellipse(ctx, X(hx - 15), Y(hy - 12), 6, 2.6, '#ffb3c1', -0.4);
+  ctx.strokeStyle = '#f2e3b8';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(X(hx - 7), Y(hy - 16));
+  ctx.quadraticCurveTo(X(hx - 12), Y(hy - 28), X(hx - 4), Y(hy - 30));
+  ctx.moveTo(X(hx + 7), Y(hy - 17));
+  ctx.quadraticCurveTo(X(hx + 12), Y(hy - 29), X(hx + 4), Y(hy - 31));
+  ctx.stroke();
+  ellipse(ctx, X(hx), Y(hy), 17, 20, radgrad(ctx, X(hx), Y(hy), 2, 20, ['#ffffff', '#f2ece2'], X(hx - 5), Y(hy - 8)));
+  ellipse(ctx, X(hx - 6), Y(hy - 8), 7, 6, '#2e2622');
+  // морда
+  ellipse(ctx, X(hx + 2), Y(hy + 13), 14, 10, '#ffb3c1');
+  ellipse(ctx, X(hx - 3), Y(hy + 13), 2.4, 3, '#b8586a');
+  ellipse(ctx, X(hx + 7), Y(hy + 13), 2.4, 3, '#b8586a');
+  if (!eating) {
+    circle(ctx, X(hx - 6), Y(hy - 4), 3.2, '#1e1e1e');
+    circle(ctx, X(hx + 7), Y(hy - 4), 3.2, '#1e1e1e');
+    circle(ctx, X(hx - 5), Y(hy - 5), 1.1, '#ffffff');
+    circle(ctx, X(hx + 8), Y(hy - 5), 1.1, '#ffffff');
+    // колокольчик
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(X(hx - 12), Y(hy + 22), 18, 4);
+    circle(ctx, X(hx - 3), Y(hy + 31), 6, radgrad(ctx, X(hx - 3), Y(hy + 31), 1, 6, ['#fff3a8', '#f2b82e', '#c4860a'], X(hx - 5), Y(hy + 29)));
+  } else {
+    // глаза прикрыты: жуёт
+    ctx.strokeStyle = '#1e1e1e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(X(hx - 6), Y(hy - 5), 3, 0.1, Math.PI - 0.1);
+    ctx.moveTo(X(hx + 10), Y(hy - 5));
+    ctx.arc(X(hx + 7), Y(hy - 5), 3, 0.1, Math.PI - 0.1);
+    ctx.stroke();
+  }
+}
+
+/** Овечка: 0 — только что острижена, 3 — пушистое облако шерсти. */
+function drawSheep(ctx: Ctx, cx: number, cy: number, stage: number) {
+  softShadow(ctx, cx, cy - 2, 46 + stage * 4, 11, 0.3);
+  const bx = cx - 4;
+  const by = cy - 44;
+  for (const lx of [-22, -10, 14, 26]) {
+    ctx.fillStyle = '#3b302b';
+    rrect(ctx, bx + lx, by + 14, 7, 28, 3);
+    ctx.fill();
+  }
+  const rx = 28 + stage * 6;
+  const ry = 17 + stage * 4.5;
+  if (stage === 0) {
+    ellipse(ctx, bx, by, rx, ry, radgrad(ctx, bx, by, 2, rx, ['#fff1e6', '#f2d9c8', '#dcbfae'], bx - 8, by - 8));
+    ctx.strokeStyle = 'rgba(180,140,120,0.35)';
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath();
+      ctx.arc(bx + rr(-18, 18), by + rr(-8, 8), 4, 0, Math.PI);
+      ctx.stroke();
+    }
+  } else {
+    // шерсть — облако из кружков по контуру
+    const puffs = 10 + stage * 4;
+    const pr = 7 + stage * 2.5;
+    ellipse(ctx, bx, by + 2, rx, ry, '#d9d2c8');
+    for (let i = 0; i < puffs; i++) {
+      const a = (i / puffs) * Math.PI * 2;
+      const px = bx + Math.cos(a) * (rx - pr * 0.5);
+      const py = by + Math.sin(a) * (ry - pr * 0.5);
+      circle(ctx, px, py + 1.5, pr, '#d6cfc4');
+      circle(ctx, px, py, pr, radgrad(ctx, px, py, 1, pr, ['#ffffff', '#f5f1ea', '#e2dbd0'], px - pr * 0.3, py - pr * 0.4));
+    }
+    ellipse(ctx, bx, by, rx - pr * 0.6, ry - pr * 0.6, radgrad(ctx, bx, by, 2, rx, ['#ffffff', '#f3eee6'], bx - 10, by - 10));
+    for (let i = 0; i < stage * 5; i++) {
+      ctx.strokeStyle = 'rgba(200,190,175,0.6)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(bx + rr(-rx * 0.6, rx * 0.6), by + rr(-ry * 0.5, ry * 0.5), rr(3, 5), 0.3, Math.PI * 1.6);
+      ctx.stroke();
+    }
+  }
+  // голова
+  const hx = bx + rx - 2;
+  const hy = by - ry * 0.35 - 2;
+  ellipse(ctx, hx - 8, hy - 4, 9, 4.5, '#2f2622', -0.5);
+  ellipse(ctx, hx + 12, hy - 4, 9, 4.5, '#2f2622', 0.5);
+  ellipse(ctx, hx + 2, hy + 4, 12, 14, radgrad(ctx, hx + 2, hy + 4, 1, 14, ['#5a4a42', '#3b302b'], hx - 2, hy - 2));
+  circle(ctx, hx - 3, hy + 1, 3.4, '#ffffff');
+  circle(ctx, hx + 7, hy + 1, 3.4, '#ffffff');
+  circle(ctx, hx - 2.4, hy + 1.6, 1.8, '#1e1e1e');
+  circle(ctx, hx + 7.6, hy + 1.6, 1.8, '#1e1e1e');
+  ellipse(ctx, hx + 2, hy + 12, 4, 2, '#ff9fb0');
+  if (stage > 0) {
+    // чубчик
+    for (let i = 0; i < 3 + stage; i++) circle(ctx, hx - 4 + i * 3.5, hy - 10 - (i % 2) * 2, 4 + stage * 0.6, '#f7f3ec');
+  }
+}
+
+function drawMilkIcon(ctx: Ctx) {
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowOffsetY = 3;
+  ctx.beginPath();
+  ctx.moveTo(38, 18);
+  ctx.lineTo(58, 18);
+  ctx.lineTo(58, 30);
+  ctx.quadraticCurveTo(72, 38, 72, 52);
+  ctx.lineTo(72, 80);
+  ctx.quadraticCurveTo(72, 88, 64, 88);
+  ctx.lineTo(32, 88);
+  ctx.quadraticCurveTo(24, 88, 24, 80);
+  ctx.lineTo(24, 52);
+  ctx.quadraticCurveTo(24, 38, 38, 30);
+  ctx.closePath();
+  ctx.fillStyle = lingrad(ctx, 24, 0, 72, 0, ['#ffffff', '#f4f7fb', '#d5dde8']);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = '#9fb3c8';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = '#3d8be0';
+  rrect(ctx, 35, 10, 26, 12, 4);
+  ctx.fill();
+  ctx.fillStyle = '#5fb0ff';
+  rrect(ctx, 26, 56, 44, 20, 4);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 13px Rubik, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('МУ', 48, 67);
+  ellipse(ctx, 32, 46, 3, 9, 'rgba(255,255,255,0.9)');
+}
+
+function drawWoolIcon(ctx: Ctx) {
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowOffsetY = 3;
+  circle(ctx, 48, 50, 34, radgrad(ctx, 48, 50, 3, 34, ['#fff2f7', '#f5c6d8', '#d98aac'], 38, 38));
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = 'rgba(160,60,100,0.45)';
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.ellipse(48, 50, 30, 12 + i * 3, -0.6 + i * 0.35, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#d98aac';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(74, 70);
+  ctx.quadraticCurveTo(90, 78, 82, 90);
+  ctx.stroke();
+}
+
+// ---------- море ----------
+
+function drawWhale(ctx: Ctx) {
+  const cy = 100;
+  // тело: голова справа, хвост слева
+  ctx.beginPath();
+  ctx.moveTo(300, cy);
+  ctx.bezierCurveTo(300, 40, 200, 34, 150, 44);
+  ctx.bezierCurveTo(100, 54, 70, 80, 44, 92);
+  ctx.lineTo(44, 108);
+  ctx.bezierCurveTo(90, 126, 200, 132, 260, 126);
+  ctx.bezierCurveTo(290, 122, 300, 112, 300, cy);
+  ctx.closePath();
+  ctx.fillStyle = lingrad(ctx, 0, 40, 0, 130, ['#6d93c9', '#4a6fa8', '#2f4f82']);
+  ctx.fill();
+  // светлое брюхо
+  ctx.save();
+  ctx.clip();
+  ellipse(ctx, 210, 128, 90, 18, '#cfe1f2');
+  for (let i = 0; i < 6; i++) {
+    ctx.strokeStyle = 'rgba(80,110,150,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(150 + i * 20, 116);
+    ctx.lineTo(160 + i * 20, 130);
+    ctx.stroke();
+  }
+  // блик на спине
+  ellipse(ctx, 210, 58, 60, 8, 'rgba(255,255,255,0.3)', -0.05);
+  ctx.restore();
+  // хвостовой плавник
+  ctx.beginPath();
+  ctx.moveTo(52, 96);
+  ctx.quadraticCurveTo(20, 60, 6, 70);
+  ctx.quadraticCurveTo(24, 92, 18, 98);
+  ctx.quadraticCurveTo(24, 106, 6, 128);
+  ctx.quadraticCurveTo(24, 134, 52, 106);
+  ctx.closePath();
+  ctx.fillStyle = '#3f6199';
+  ctx.fill();
+  // боковой плавник
+  ellipse(ctx, 196, 112, 22, 8, '#3a5a8e', 0.5);
+  // глаз и улыбка
+  circle(ctx, 268, 92, 5, '#1b2438');
+  circle(ctx, 269.5, 90.5, 1.8, '#ffffff');
+  ctx.strokeStyle = '#243553';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(296, 104);
+  ctx.quadraticCurveTo(270, 110, 250, 104);
+  ctx.stroke();
+  // дыхало
+  ellipse(ctx, 236, 48, 7, 3, '#243553');
+  // нижняя часть тела уходит под воду
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = lingrad(ctx, 0, 100, 0, 140, ['rgba(0,0,0,0)', 'rgba(0,0,0,0.75)', 'rgba(0,0,0,1)']);
+  ctx.fillRect(0, 100, 340, 70);
+  ctx.globalCompositeOperation = 'source-over';
+  POINTS.whaleSpout = { x: 236 - 170, y: 44 - 110 };
+}
+
+function drawRipple(ctx: Ctx) {
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.lineWidth = 5;
+  ctx.shadowColor = 'rgba(255,255,255,0.9)';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.ellipse(150, 45, 140, 36, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawRainbow(ctx: Ctx) {
+  const cols = ['#ff5d5d', '#ffa24a', '#ffe066', '#7ee05a', '#5ac8ff', '#9a7bff'];
+  cols.forEach((c, i) => {
+    ctx.strokeStyle = c;
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(130, 130, 118 - i * 8, Math.PI, 0);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
 }
 
 // ---------- частицы ----------
@@ -1554,10 +1933,31 @@ export function generateArt(scene: Phaser.Scene) {
     make(scene, `fgrass${v}`, 260, 132, { x: 130, y: 2 }, (c) => drawGrass(c, v, FOREST_GRASS));
     make(scene, `cgrass${v}`, 260, 132, { x: 130, y: 2 }, (c) => drawGrass(c, v, CLEARING_GRASS));
   }
-  make(scene, 'bridge', 3 * 128 + 20, 3 * 64 + 50, { x: 2 * 128 + 10, y: 30 }, (c) => drawBridge(c, 2 * 128 + 10, 30));
+  make(scene, 'bridge_v', 3 * 128 + 20, 3 * 64 + 50, { x: 2 * 128 + 10, y: 30 }, (c) => drawBridge(c, 2 * 128 + 10, 30, 'v'));
+  make(scene, 'bridge_u', 3 * 128 + 20, 3 * 64 + 50, { x: 128 + 10, y: 30 }, (c) => drawBridge(c, 128 + 10, 30, 'u'));
   make(scene, 'fern', 130, 90, { x: 65, y: 80 }, (c) => drawFern(c, 65, 80));
   make(scene, 'stump', 100, 90, { x: 50, y: 74 }, (c) => drawStump(c, 50, 74));
   make(scene, 'sign', 130, 150, { x: 60, y: 138 }, (c) => drawSign(c, 60, 138));
+  make(scene, 'signMeadow', 130, 150, { x: 70, y: 138 }, (c) => drawSign(c, 70, 138, 'Луг', true));
+  for (let v = 0; v < 3; v++) make(scene, `mgrass${v}`, 260, 132, { x: 130, y: 2 }, (c) => drawGrass(c, v, MEADOW_GRASS));
+  make(scene, 'pasture', 260, 152, { x: 130, y: 2 }, drawPasture);
+  for (const st of [1, 2, 3]) make(scene, `meadow${st}`, 260, 260, { x: 130, y: 120 }, (c) => drawMeadowGrass(c, st));
+  make(scene, 'hay', 130, 100, { x: 65, y: 84 }, (c) => drawHay(c, 65, 84));
+  make(scene, 'cow', 170, 140, { x: 85, y: 124 }, (c) => drawCow(c, 85, 124, false));
+  make(scene, 'cow_eat', 170, 140, { x: 85, y: 124 }, (c) => drawCow(c, 85, 124, true));
+  for (const st of [0, 1, 2, 3]) make(scene, `sheep${st}`, 150, 130, { x: 70, y: 116 }, (c) => drawSheep(c, 70, 116, st));
+  make(scene, 'i_milk', 96, 96, null, drawMilkIcon);
+  make(scene, 'i_grass', 96, 96, null, (c) => {
+    for (let k = 0; k < 7; k++) leaf(c, 48 + (k - 3) * 4, 84, (k - 3) * 0.22, rr(46, 62), 7, k % 2 ? '#5cbf38' : '#3f9a2e', 0.1);
+    for (const [x, y] of [[34, 36], [62, 30]]) {
+      for (let i = 0; i < 6; i++) circle(c, x + Math.cos(i) * 5, y + Math.sin(i) * 5, 4.5, '#ffffff');
+      circle(c, x, y, 3, '#ffd84a');
+    }
+  });
+  make(scene, 'i_wool', 96, 96, null, drawWoolIcon);
+  make(scene, 'whale', 340, 170, { x: 170, y: 110 }, drawWhale);
+  make(scene, 'ripple', 300, 90, { x: 150, y: 45 }, drawRipple);
+  make(scene, 'rainbow', 260, 140, { x: 130, y: 130 }, drawRainbow);
   for (const k of ['champignon', 'chanterelle', 'porcini'] as const)
     for (const st of [1, 2, 3])
       make(scene, `mush_${k}${st}`, 160, 150, { x: 80, y: 132 }, (c) => {

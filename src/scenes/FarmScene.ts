@@ -4,13 +4,15 @@ import { DPR, state } from '../game/context';
 import { sfx } from '../game/sfx';
 import { CROPS, MUSHROOMS, type CropId, type ItemId, type Mushroom, type Plot } from '../game/state';
 import {
-  BRIDGE,
+  BRIDGES,
+  MEADOW_PATH,
   BUILDINGS,
   CLEARING,
   DECOR,
   FOREST,
   FOREST_DECOR,
   FOREST_PATH,
+  MEADOW_DECOR,
   ISLANDS,
   N,
   PATH,
@@ -24,24 +26,15 @@ import {
   unIso,
   type BuildingKind,
 } from '../game/world';
-import type { UIScene } from './UIScene';
+import type { Counter, UIScene } from './UIScene';
+import { D } from './depth';
+import { Meadow } from './meadow';
+import { Whale } from './whale';
 
 type Img = Phaser.GameObjects.Image;
 type Emitter = Phaser.GameObjects.Particles.ParticleEmitter;
 
-// Слои по глубине. Всё, что стоит на земле, сортируется по мировому Y.
-const D = {
-  water: -100000,
-  foam: -90000,
-  cliff: -80000,
-  ground: -70000,
-  decal: -60000,
-  plot: -50000,
-  highlight: -40000,
-  cloudShadow: -30000,
-  fx: 50000,
-  sky: 90000,
-};
+
 
 interface PlotView {
   plot: Plot;
@@ -101,10 +94,12 @@ function stageOf(p: number) {
 }
 
 export class FarmScene extends Phaser.Scene {
-  private ui!: UIScene;
+  ui!: UIScene;
   private blocked!: Set<string>;
   private plotViews = new Map<number, PlotView>();
   private mushViews = new Map<number, MushroomView>();
+  private meadow!: Meadow;
+  private whale!: Whale;
   private barn!: Img;
   private highlight!: Img;
   private ghost!: Img;
@@ -114,16 +109,16 @@ export class FarmScene extends Phaser.Scene {
   private chickens: Chicken[] = [];
   private clouds: Array<{ cloud: Img; shadow: Img; speed: number }> = [];
   private water: Phaser.GameObjects.TileSprite[] = [];
-  private fx!: Record<'leaves' | 'grain' | 'carrot' | 'stars' | 'dust' | 'hearts' | 'feathers' | 'seeds', Emitter>;
+  fx!: Record<'leaves' | 'grain' | 'carrot' | 'stars' | 'dust' | 'hearts' | 'feathers' | 'seeds', Emitter>;
   private growthTimer = 0;
 
   // камера
-  private zoomLevel = 0.5;
+  zoomLevel = 0.5;
   private dragging = false;
   private downAt = { x: 0, y: 0 };
   private velocity = { x: 0, y: 0 };
   private pinchDist = 0;
-  private intro = true;
+  intro = true;
 
   constructor() {
     super('farm');
@@ -141,6 +136,8 @@ export class FarmScene extends Phaser.Scene {
     this.buildEffects();
     this.buildAmbient();
     this.buildForestAmbient();
+    this.meadow = new Meadow(this);
+    this.whale = new Whale(this);
     this.setupCamera();
     this.setupInput();
 
@@ -157,7 +154,7 @@ export class FarmScene extends Phaser.Scene {
     state.on('mushrooms:spawn', (ms: Mushroom[]) => ms.forEach((m) => this.addMushroomView(m, !this.intro)));
     state.tickMushrooms(randomMushroomSpot);
 
-    this.playIntro(groundTweens, [...objects, ...[...this.mushViews.values()].map((v) => v.img)]);
+    this.playIntro(groundTweens, [...objects, ...[...this.mushViews.values()].map((v) => v.img), ...this.meadow.introObjects()]);
   }
 
   // ---------------------------------------------------------------- мир
@@ -185,7 +182,7 @@ export class FarmScene extends Phaser.Scene {
     for (const isl of ISLANDS) {
       const mx = isl.tx + (isl.w - 1) / 2;
       const my = isl.ty + (isl.h - 1) / 2;
-      const base = isl.kind === 'forest' ? 350 : 0;
+      const base = isl.kind === 'farm' ? 0 : 350;
       for (let ty = isl.ty; ty < isl.ty + isl.h; ty++)
         for (let tx = isl.tx; tx < isl.tx + isl.w; tx++) {
           const p = iso(tx, ty);
@@ -195,7 +192,11 @@ export class FarmScene extends Phaser.Scene {
               ? PATH.has(`${tx},${ty}`)
                 ? 'path'
                 : `grass${v}`
-              : FOREST_PATH.has(`${tx},${ty}`)
+              : isl.kind === 'meadow'
+                ? MEADOW_PATH.has(`${tx},${ty}`)
+                  ? 'path'
+                  : `mgrass${v}`
+                : FOREST_PATH.has(`${tx},${ty}`)
                 ? 'path'
                 : isClearingTile(tx, ty)
                   ? `cgrass${v}`
@@ -215,8 +216,11 @@ export class FarmScene extends Phaser.Scene {
           }
         }
     }
-    const b = iso(BRIDGE.tx, BRIDGE.ty);
-    items.push({ obj: anchor(this.add.image(b.x, b.y, 'bridge'), 'bridge').setDepth(D.decal), delay: 300 });
+    for (const br of BRIDGES) {
+      const b = iso(br.tx, br.ty);
+      const key = `bridge_${br.axis}`;
+      items.push({ obj: anchor(this.add.image(b.x, b.y, key), key).setDepth(D.decal), delay: 300 });
+    }
 
     // в лесу темнее, а на поляну падает солнечный свет
     for (let i = 0; i < 10; i++) {
@@ -302,7 +306,7 @@ export class FarmScene extends Phaser.Scene {
 
   private buildDecor() {
     const objs: Img[] = [];
-    const all = [...DECOR.map((d) => ({ ...d, dx: 0, dy: 0 })), ...FOREST_DECOR];
+    const all = [...DECOR.map((d) => ({ ...d, dx: 0, dy: 0 })), ...FOREST_DECOR, ...MEADOW_DECOR];
     for (const d of all) {
       const c = tileCenter(d.tx + d.dx, d.ty + d.dy);
       const img = anchor(this.add.image(c.x, c.y, d.kind), d.kind).setDepth(c.y);
@@ -410,12 +414,12 @@ export class FarmScene extends Phaser.Scene {
     this.fx.leaves.explode(6, img.x, img.y - 10);
     this.ui.floatText(screen.x, screen.y - 30, rare ? `${def.name}!` : def.name, rare ? '#ffe066' : '#ffffff');
     this.ui.flyIcons(screen.x, screen.y, 'i_star', 'xp', 1, 200);
-    this.flyToBarn(img, rare);
+    this.flyToBarn(img, 'mushrooms', rare);
   }
 
-  /** Гриб подпрыгивает, крутится и по высокой дуге улетает в амбар. */
-  private flyToBarn(img: Img, rare: boolean) {
-    this.ui.expect('mushrooms');
+  /** Предмет подпрыгивает, крутится и по высокой дуге улетает в амбар. */
+  flyToBarn(img: Img, counter: Counter, rare = false) {
+    this.ui.expect(counter);
     img.setDepth(D.sky - 1);
     const start = { x: img.x, y: img.y - 90 };
     const door = { x: this.barn.x - 70, y: this.barn.y - 60 };
@@ -476,7 +480,7 @@ export class FarmScene extends Phaser.Scene {
               yoyo: true,
               onComplete: () => this.barn.setScale(1),
             });
-            this.ui.arrive('mushrooms');
+            this.ui.arrive(counter);
           },
         });
       },
@@ -991,6 +995,8 @@ export class FarmScene extends Phaser.Scene {
       this.tapMushroom(mush);
       return;
     }
+    if (this.whale.tap(w.x, w.y)) return;
+    if (this.meadow.tap(w.x, w.y, tx, ty)) return;
 
     const plot = state.plotAt(tx, ty);
     if (plot) {
@@ -1246,6 +1252,9 @@ export class FarmScene extends Phaser.Scene {
       }
     }
 
+    this.meadow.update();
+    this.whale.update();
+
     for (const ch of this.chickens) {
       ch.img.setPosition(ch.x, ch.y - ch.hop).setDepth(ch.y);
       ch.shadow.setPosition(ch.x, ch.y).setDepth(ch.y - 1).setScale(0.8 - ch.hop * 0.004, 0.28 - ch.hop * 0.001);
@@ -1257,6 +1266,7 @@ export class FarmScene extends Phaser.Scene {
       for (const v of this.plotViews.values()) this.refreshPlot(v, true);
       if (!this.intro) state.tickMushrooms(randomMushroomSpot);
       for (const v of this.mushViews.values()) this.refreshMushroom(v);
+      this.meadow.tick();
     }
   }
 }

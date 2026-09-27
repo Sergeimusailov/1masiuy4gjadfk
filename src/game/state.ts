@@ -19,7 +19,43 @@ export const CROPS: Record<CropId, CropDef> = {
 };
 
 export type MushroomId = 'champignon' | 'chanterelle' | 'porcini';
-export type ItemId = CropId | MushroomId;
+export type AnimalKind = 'cow' | 'sheep';
+export type ProductId = 'milk' | 'wool';
+export type ItemId = CropId | MushroomId | ProductId;
+
+export interface AnimalDef {
+  kind: AnimalKind;
+  name: string;
+  product: ProductId;
+  productName: string;
+  /** Сколько после кормёжки ждать продукта. */
+  produceMs: number;
+  sellPrice: number;
+  xp: number;
+}
+
+export const ANIMALS: Record<AnimalKind, AnimalDef> = {
+  cow: { kind: 'cow', name: 'Корова', product: 'milk', productName: 'Молоко', produceMs: 20_000, sellPrice: 18, xp: 5 },
+  sheep: { kind: 'sheep', name: 'Овечка', product: 'wool', productName: 'Шерсть', produceMs: 30_000, sellPrice: 22, xp: 6 },
+};
+
+export interface Animal {
+  id: number;
+  kind: AnimalKind;
+  /** Когда поело; null — голодное. */
+  fedAt: number | null;
+}
+
+export interface Pasture {
+  id: number;
+  tx: number;
+  ty: number;
+  /** Когда посеяна трава; null — пустая грядка. */
+  sownAt: number | null;
+}
+
+export const GRASS_GROW_MS = 12_000;
+export const SOW_COST = 3;
 
 export interface MushroomDef {
   id: MushroomId;
@@ -38,10 +74,16 @@ export const MUSHROOMS: Record<MushroomId, MushroomDef> = {
 };
 
 export const MUSHROOM_IDS = Object.keys(MUSHROOMS) as MushroomId[];
-export const ITEM_IDS: ItemId[] = ['wheat', 'carrot', ...MUSHROOM_IDS];
+export const ITEM_IDS: ItemId[] = ['wheat', 'carrot', ...MUSHROOM_IDS, 'milk', 'wool'];
 
 export const sellPrice = (id: ItemId) =>
-  id === 'wheat' || id === 'carrot' ? CROPS[id].sellPrice : MUSHROOMS[id].sellPrice;
+  id === 'wheat' || id === 'carrot'
+    ? CROPS[id].sellPrice
+    : id === 'milk'
+      ? ANIMALS.cow.sellPrice
+      : id === 'wool'
+        ? ANIMALS.sheep.sellPrice
+        : MUSHROOMS[id].sellPrice;
 
 export interface Mushroom {
   id: number;
@@ -74,13 +116,25 @@ interface SaveData {
   mushrooms?: Mushroom[];
   nextMushroomAt?: number;
   nextMushroomId?: number;
+  animals?: Animal[];
+  pastures?: Pasture[];
 }
 
 type Listener = (...args: any[]) => void;
 
 const SAVE_KEY = 'iso-farm-save-v1';
 
-const emptyInventory = (): Record<ItemId, number> => ({ wheat: 0, carrot: 0, champignon: 0, chanterelle: 0, porcini: 0 });
+const emptyInventory = (): Record<ItemId, number> => ({
+  wheat: 0,
+  carrot: 0,
+  champignon: 0,
+  chanterelle: 0,
+  porcini: 0,
+  milk: 0,
+  wool: 0,
+});
+
+const STARTING_ANIMALS: AnimalKind[] = ['cow', 'cow', 'sheep', 'sheep', 'sheep'];
 
 export const xpForLevel = (level: number) => 10 + (level - 1) * 15;
 
@@ -91,14 +145,23 @@ export class GameState {
   inventory: Record<ItemId, number> = emptyInventory();
   plots: Plot[] = [];
   mushrooms: Mushroom[] = [];
+  animals: Animal[] = [];
+  pastures: Pasture[] = [];
   private nextPlotId = 1;
   private nextMushroomAt = Date.now() + 1_500;
   private nextMushroomId = 1;
   private listeners = new Map<string, Set<Listener>>();
 
-  constructor(initialPlots: Array<[number, number]>) {
+  constructor(initialPlots: Array<[number, number]>, pastures: Array<[number, number]>) {
     if (!this.load()) {
       for (const [tx, ty] of initialPlots) this.addPlot(tx, ty);
+    }
+    // луг появился позже фермы: старым сохранениям выдаём животных и пастбища
+    if (!this.animals.length) this.animals = STARTING_ANIMALS.map((kind, i) => ({ id: i + 1, kind, fedAt: null }));
+    if (!this.pastures.length) {
+      // две грядки уже заросли — животные сразу покажут, как едят
+      const now = Date.now();
+      this.pastures = pastures.map(([tx, ty], i) => ({ id: i + 1, tx, ty, sownAt: i < 2 ? now - GRASS_GROW_MS : null }));
     }
   }
 
@@ -174,6 +237,56 @@ export class GameState {
 
   get mushroomCount() {
     return MUSHROOM_IDS.reduce((a, k) => a + this.inventory[k], 0);
+  }
+
+  // ---------------------------------------------------------------- луг
+
+  grassGrowth(p: Pasture, now = Date.now()) {
+    return p.sownAt === null ? 0 : Math.min(1, (now - p.sownAt) / GRASS_GROW_MS);
+  }
+
+  grassMsLeft(p: Pasture, now = Date.now()) {
+    return p.sownAt === null ? 0 : Math.max(0, p.sownAt + GRASS_GROW_MS - now);
+  }
+
+  sow(p: Pasture): boolean {
+    if (p.sownAt !== null || this.coins < SOW_COST) return false;
+    this.coins -= SOW_COST;
+    p.sownAt = Date.now();
+    this.emit('coins', this.coins);
+    this.emit('pasture', p);
+    return true;
+  }
+
+  /** 0..1 — сколько «созрело» молоко или шерсть; у голодного животного 0. */
+  produce(a: Animal, now = Date.now()) {
+    return a.fedAt === null ? 0 : Math.min(1, (now - a.fedAt) / ANIMALS[a.kind].produceMs);
+  }
+
+  produceMsLeft(a: Animal, now = Date.now()) {
+    return a.fedAt === null ? 0 : Math.max(0, a.fedAt + ANIMALS[a.kind].produceMs - now);
+  }
+
+  /** Животное съедает траву с пастбища и начинает «производить». */
+  feed(a: Animal, p: Pasture): boolean {
+    if (a.fedAt !== null || this.grassGrowth(p) < 1) return false;
+    p.sownAt = null;
+    a.fedAt = Date.now();
+    this.emit('pasture', p);
+    this.emit('animal', a);
+    return true;
+  }
+
+  /** Подоить корову или остричь овцу. После этого животное снова голодное. */
+  collect(a: Animal): ProductId | null {
+    if (this.produce(a) < 1) return null;
+    const product = ANIMALS[a.kind].product;
+    a.fedAt = null;
+    this.inventory[product] += 1;
+    this.emit('animal', a);
+    this.emit('inventory', this.inventory);
+    this.addXp(ANIMALS[a.kind].xp);
+    return product;
   }
 
   // ---------------------------------------------------------------- грибы
@@ -261,6 +374,8 @@ export class GameState {
       mushrooms: this.mushrooms,
       nextMushroomAt: this.nextMushroomAt,
       nextMushroomId: this.nextMushroomId,
+      animals: this.animals,
+      pastures: this.pastures,
     };
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -283,6 +398,8 @@ export class GameState {
       this.mushrooms = data.mushrooms ?? [];
       this.nextMushroomAt = data.nextMushroomAt ?? Date.now() + 1_500;
       this.nextMushroomId = data.nextMushroomId ?? 1;
+      this.animals = data.animals ?? [];
+      this.pastures = data.pastures ?? [];
       return this.plots.length > 0;
     } catch {
       return false;
