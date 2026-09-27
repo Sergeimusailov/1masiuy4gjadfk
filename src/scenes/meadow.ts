@@ -19,6 +19,8 @@ interface PastureView {
   stage: number;
   /** Животное, которое уже идёт есть эту траву. */
   claimedBy: number | null;
+  /** Подсветка «посейте здесь», пока животные голодные, а грядка пустая. */
+  sowHint: Phaser.GameObjects.Container;
 }
 
 interface AnimalView {
@@ -35,6 +37,8 @@ interface AnimalView {
   /** Текущая стадия шерсти (для овец), чтобы менять текстуру только при переходе. */
   wool: number;
   ready: boolean;
+  /** Чем сейчас подсвечено: красноватым (голодное) или золотым (готово). */
+  glowMode: 'none' | 'hungry' | 'ready';
 }
 
 const grassStage = (g: number) => (g >= 1 ? 3 : g >= 0.45 ? 2 : g > 0 ? 1 : 0);
@@ -101,7 +105,15 @@ export class Meadow {
   private addPasture(p: Pasture) {
     const pos = iso(p.tx, p.ty);
     const base = anchor(this.scene.add.image(pos.x, pos.y, 'pasture'), 'pasture').setDepth(D.plot + pos.y);
-    const view: PastureView = { p, base, grass: null, stage: 0, claimedBy: null };
+    const c = tileCenter(p.tx, p.ty);
+    const ring = anchor(this.scene.add.image(pos.x, pos.y, 'tileHL'), 'tileHL').setTint(0x9dff7a);
+    const icon = this.scene.add.image(c.x, c.y - 120, 'i_grass').setScale(0.9);
+    const arrow = this.scene.add.image(c.x, c.y - 60, 'spark').setScale(0.5).setTint(0xd8ffb0);
+    const sowHint = this.scene.add.container(0, 0, [ring, arrow, icon]).setDepth(D.fx - 3).setVisible(false);
+    sowHint.setData('icon', icon);
+    this.scene.tweens.add({ targets: ring, alpha: { from: 0.9, to: 0.3 }, duration: 650, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    this.scene.tweens.add({ targets: [icon, arrow], y: '-=22', duration: 520, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    const view: PastureView = { p, base, grass: null, stage: 0, claimedBy: null, sowHint };
     this.pastures.set(p.id, view);
     this.refreshPasture(view, false);
   }
@@ -168,10 +180,14 @@ export class Meadow {
     const shadow = this.scene.add.image(start.x, start.y, 'soft').setTint(0x1a2a0a).setAlpha(0.28);
     shadow.setScale(a.kind === 'cow' ? 2.3 : 1.9, 0.55);
     // пузырь с травинкой над голодным животным
+    const halo = this.scene.add.image(0, 0, 'soft').setScale(2.4).setTint(0xff3b2f);
     const bubble = this.scene.add
-      .container(0, 0, [this.scene.add.image(0, 0, 'bubble').setScale(0.5), this.scene.add.image(0, -2, 'i_grass').setScale(0.62)])
+      .container(0, 0, [halo, this.scene.add.image(0, 0, 'bubble').setScale(0.55), this.scene.add.image(0, -2, 'i_grass').setScale(0.7)])
       .setDepth(D.fx - 2)
       .setVisible(false);
+    // пузырь «хочу есть» пульсирует, а красноватый ореол вокруг него дышит
+    this.scene.tweens.add({ targets: bubble, scale: { from: 1, to: 1.14 }, duration: 480, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    this.scene.tweens.add({ targets: halo, alpha: { from: 0.75, to: 0.2 }, duration: 480, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
     const view: AnimalView = {
       a,
       img,
@@ -185,6 +201,7 @@ export class Meadow {
       mode: 'idle',
       wool: -1,
       ready: false,
+      glowMode: 'none',
     };
     this.animals.push(view);
     this.refreshAnimal(view, false);
@@ -276,17 +293,35 @@ export class Meadow {
         }
       }
     }
-    if (ready !== v.ready) {
-      v.ready = ready;
+    const hungry = v.a.fedAt === null && v.mode !== 'eat';
+    if (ready && !v.ready && animate) this.scene.fx.stars.explode(8, v.x, v.y - 70);
+    v.ready = ready;
+    // сияние: золотое — можно собирать, красноватое пульсирующее — голодное
+    const mode = ready ? 'ready' : hungry ? 'hungry' : 'none';
+    if (mode !== v.glowMode) {
+      v.glowMode = mode;
       v.glowTween?.remove();
       v.glowTween = null;
-      if (ready) {
-        v.glowTween = this.scene.tweens.add({ targets: v.glow, outerStrength: { from: 2, to: 5 }, duration: 800, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
-        if (animate) this.scene.fx.stars.explode(8, v.x, v.y - 70);
-      } else v.glow.outerStrength = 0;
+      if (mode === 'none') v.glow.outerStrength = 0;
+      else {
+        v.glow.color = mode === 'ready' ? 0xfff3b0 : 0xff3b2f;
+        const [lo, hi, dur] = mode === 'ready' ? [2, 5, 800] : [2, 6, 520];
+        v.glowTween = this.scene.tweens.add({ targets: v.glow, outerStrength: { from: lo, to: hi }, duration: dur, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+      }
     }
-    const hungry = v.a.fedAt === null && v.mode !== 'eat';
     v.bubble.setVisible(hungry);
+  }
+
+  /** Коротко «вспыхивают» пустые пастбища: подсказка, куда сеять. */
+  private flashSowHints() {
+    for (const p of this.pastures.values()) {
+      if (!p.sowHint.visible) continue;
+      const icon = p.sowHint.getData('icon') as Img;
+      icon.setScale(1.5);
+      this.scene.tweens.add({ targets: icon, scale: 0.9, duration: 500, ease: 'Back.Out' });
+      const c = tileCenter(p.p.tx, p.p.ty);
+      this.scene.fx.stars.explode(6, c.x, c.y - 20);
+    }
   }
 
   private animalAt(wx: number, wy: number) {
@@ -315,8 +350,11 @@ export class Meadow {
     }
     const product = state.collect(v.a);
     if (!product) {
-      if (v.a.fedAt === null) ui.floatText(s.x, s.y, 'Хочет есть — посейте траву', '#ffffff');
-      else ui.floatText(s.x, s.y, `${def.productName} через ${fmt(state.produceMsLeft(v.a))}`, '#ffffff');
+      if (v.a.fedAt === null) {
+        // голодное: пузырь с травой вздрагивает, пустые пастбища вспыхивают
+        this.scene.tweens.add({ targets: v.bubble, angle: { from: -14, to: 14 }, duration: 70, yoyo: true, repeat: 3, onComplete: () => v.bubble.setAngle(0) });
+        this.flashSowHints();
+      } else ui.floatText(s.x, s.y, `${def.productName} через ${fmt(state.produceMsLeft(v.a))}`, '#ffffff');
       return;
     }
     ui.visitedMeadow = true;
@@ -357,6 +395,9 @@ export class Meadow {
   tick() {
     for (const v of this.pastures.values()) this.refreshPasture(v, true);
     for (const v of this.animals) this.refreshAnimal(v, true);
+    // пустые пастбища подсвечиваются, пока хоть одно животное голодное
+    const hungry = this.animals.some((v) => v.a.fedAt === null);
+    for (const v of this.pastures.values()) v.sowHint.setVisible(hungry && v.p.sownAt === null);
   }
 
   /** Каждый кадр: позиции, тени, глубина, покачивание пузыря голода. */

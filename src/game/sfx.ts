@@ -111,8 +111,50 @@ function voice(o: {
   vib.stop(t + o.dur + 0.05);
 }
 
+// ---------------------------------------------------------------- записанные звуки
+
+/**
+ * Настоящие записи лежат в public/sounds. Если файла нет или он не загрузился,
+ * играет синтезированный вариант, так что игра звучит в любом случае.
+ */
+const SAMPLE_FILES = { moo: 'sounds/moo.mp3', baa: 'sounds/baa.mp3', cluck: 'sounds/cluck.mp3' } as const;
+type SampleId = keyof typeof SAMPLE_FILES;
+const samples = new Map<SampleId, AudioBuffer | null>();
+
+async function loadSample(id: SampleId) {
+  const a = audio();
+  if (!a || samples.has(id)) return;
+  samples.set(id, null);
+  try {
+    const res = await fetch(SAMPLE_FILES[id]);
+    if (!res.ok) return;
+    samples.set(id, await a.decodeAudioData(await res.arrayBuffer()));
+  } catch {
+    // файла нет — остаётся синтез
+  }
+}
+
+/** Играет запись, если она загружена; возвращает false, если записи нет. */
+function playSample(id: SampleId, vol = 0.9) {
+  const a = audio();
+  const buf = samples.get(id);
+  if (!a || !master || !buf) return false;
+  const src = a.createBufferSource();
+  src.buffer = buf;
+  // лёгкий разброс высоты, чтобы повторы не звучали одинаково
+  src.playbackRate.value = 0.94 + Math.random() * 0.12;
+  const g = a.createGain();
+  g.gain.value = vol;
+  src.connect(g).connect(master);
+  src.start();
+  return true;
+}
+
 export const sfx = {
-  unlock: () => audio(),
+  unlock: () => {
+    audio();
+    for (const id of Object.keys(SAMPLE_FILES) as SampleId[]) void loadSample(id);
+  },
   click: () => tone(660, 0.08, 'triangle', 0, 0.5, 880),
   pop: () => tone(420, 0.14, 'sine', 0, 0.8, 900),
   plant: () => {
@@ -137,6 +179,7 @@ export const sfx = {
     tone(180, 0.18, 'square', 0.1, 0.15);
   },
   cluck: () => {
+    if (playSample('cluck', 0.8)) return;
     tone(700, 0.07, 'square', 0, 0.12, 500);
     tone(820, 0.09, 'square', 0.1, 0.12, 560);
   },
@@ -159,11 +202,13 @@ export const sfx = {
   },
   /** «Му-у-у»: низкий тон, который плавно опускается. */
   moo: () => {
+    if (playSample('moo')) return;
     voice({ from: 150, to: 185, dur: 0.35, lowpass: 650, vibRate: 5, vibDepth: 3, vol: 0.55 });
     voice({ from: 185, to: 120, dur: 0.95, lowpass: 600, vibRate: 5, vibDepth: 5, vol: 0.55, delay: 0.3 });
   },
   /** «Бе-е-е»: высокий дрожащий голос. */
   baa: () => {
+    if (playSample('baa')) return;
     voice({ from: 470, to: 430, dur: 0.75, lowpass: 1900, vibRate: 7, vibDepth: 10, tremRate: 24, tremDepth: 0.6, vol: 0.42 });
   },
   /** Фонтан кита: шипящий выдох и низкий китовый голос. */
