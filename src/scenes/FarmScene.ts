@@ -2,13 +2,22 @@ import Phaser from 'phaser';
 import { anchor, generateArt, POINTS } from '../game/art';
 import { DPR, state } from '../game/context';
 import { sfx } from '../game/sfx';
-import { CROPS, type CropId, type Plot } from '../game/state';
+import { CROPS, MUSHROOMS, type CropId, type ItemId, type Mushroom, type Plot } from '../game/state';
 import {
+  BRIDGE,
   BUILDINGS,
+  CLEARING,
   DECOR,
+  FOREST,
+  FOREST_DECOR,
+  FOREST_PATH,
+  ISLANDS,
   N,
   PATH,
   POND,
+  TH,
+  isClearingTile,
+  randomMushroomSpot,
   inBounds,
   iso,
   staticBlocked,
@@ -42,6 +51,19 @@ interface PlotView {
   tweens: Phaser.Tweens.Tween[];
 }
 
+interface MushroomView {
+  m: Mushroom;
+  img: Img;
+  stage: number;
+  idle: Phaser.Tweens.Tween | null;
+}
+
+const mushroomStage = (p: number) => (p >= 1 ? 3 : p >= 0.35 ? 2 : 1);
+
+/** Иконка товара для анимации продажи. */
+const itemIcon = (item: ItemId) =>
+  `i_${item}`;
+
 interface Chicken {
   img: Img;
   shadow: Img;
@@ -53,6 +75,27 @@ interface Chicken {
 
 const tileCenter = (tx: number, ty: number) => iso(tx + 0.5, ty + 0.5);
 
+/** Куда может смотреть центр камеры: прямоугольник вокруг обоих островов. */
+const WORLD_BOUNDS = (() => {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const i of ISLANDS)
+    for (const [u, v] of [
+      [i.tx, i.ty],
+      [i.tx + i.w, i.ty],
+      [i.tx + i.w, i.ty + i.h],
+      [i.tx, i.ty + i.h],
+    ]) {
+      const p = iso(u, v);
+      xs.push(p.x);
+      ys.push(p.y);
+    }
+  const m = 0.85;
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const hw = ((Math.max(...xs) - Math.min(...xs)) / 2) * m;
+  return { x0: cx - hw, x1: cx + hw, y0: Math.min(...ys) + 100, y1: Math.max(...ys) - 150 };
+})();
+
 function stageOf(p: number) {
   return p >= 1 ? 3 : p >= 0.4 ? 2 : 1;
 }
@@ -61,6 +104,8 @@ export class FarmScene extends Phaser.Scene {
   private ui!: UIScene;
   private blocked!: Set<string>;
   private plotViews = new Map<number, PlotView>();
+  private mushViews = new Map<number, MushroomView>();
+  private barn!: Img;
   private highlight!: Img;
   private ghost!: Img;
   private buildMode = false;
@@ -95,6 +140,7 @@ export class FarmScene extends Phaser.Scene {
     for (const plot of state.plots) this.addPlotView(plot, false);
     this.buildEffects();
     this.buildAmbient();
+    this.buildForestAmbient();
     this.setupCamera();
     this.setupInput();
 
@@ -106,7 +152,12 @@ export class FarmScene extends Phaser.Scene {
       if (view) this.refreshPlot(view, true);
     });
 
-    this.playIntro(groundTweens, objects);
+    // грибы: сначала уже выросшие (из сохранения), потом новые по таймеру
+    for (const m of state.mushrooms) this.addMushroomView(m, false);
+    state.on('mushrooms:spawn', (ms: Mushroom[]) => ms.forEach((m) => this.addMushroomView(m, !this.intro)));
+    state.tickMushrooms(randomMushroomSpot);
+
+    this.playIntro(groundTweens, [...objects, ...[...this.mushViews.values()].map((v) => v.img)]);
   }
 
   // ---------------------------------------------------------------- мир
@@ -121,36 +172,72 @@ export class FarmScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setTileScale(1.6, 1.6);
     this.water = [a, b];
-    const foam = anchor(this.add.image(0, 0, 'foam'), 'foam').setScale(2).setDepth(D.foam);
-    this.tweens.add({ targets: foam, alpha: 0.65, duration: 1800, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    ISLANDS.forEach((isl, i) => {
+      const p = iso(isl.tx, isl.ty);
+      const foam = anchor(this.add.image(p.x, p.y, `foam${i}`), `foam${i}`).setScale(2).setDepth(D.foam);
+      this.tweens.add({ targets: foam, alpha: 0.65, duration: 1800, yoyo: true, repeat: -1, ease: 'Sine.InOut', delay: i * 600 });
+    });
   }
 
   /** Тайлы земли и обрывы. Возвращает объекты для анимации появления. */
   private buildIsland() {
     const items: Array<{ obj: Img; delay: number }> = [];
-    const mid = (N - 1) / 2;
-    for (let ty = 0; ty < N; ty++)
-      for (let tx = 0; tx < N; tx++) {
-        const p = iso(tx, ty);
-        const key = PATH.has(`${tx},${ty}`) ? 'path' : `grass${(tx * 7 + ty * 13) % 3}`;
-        const t = anchor(this.add.image(p.x, p.y, key), key).setDepth(D.ground + tx + ty);
-        const delay = Math.hypot(tx - mid, ty - mid) * 45;
-        items.push({ obj: t, delay });
-        if (ty === N - 1) {
-          const k = `cliffL${(tx + ty) % 2}`;
-          const c = anchor(this.add.image(iso(tx, ty + 1).x, iso(tx, ty + 1).y, k), k).setDepth(D.cliff);
-          items.push({ obj: c, delay });
+    for (const isl of ISLANDS) {
+      const mx = isl.tx + (isl.w - 1) / 2;
+      const my = isl.ty + (isl.h - 1) / 2;
+      const base = isl.kind === 'forest' ? 350 : 0;
+      for (let ty = isl.ty; ty < isl.ty + isl.h; ty++)
+        for (let tx = isl.tx; tx < isl.tx + isl.w; tx++) {
+          const p = iso(tx, ty);
+          const v = (tx * 7 + ty * 13) % 3;
+          const key =
+            isl.kind === 'farm'
+              ? PATH.has(`${tx},${ty}`)
+                ? 'path'
+                : `grass${v}`
+              : FOREST_PATH.has(`${tx},${ty}`)
+                ? 'path'
+                : isClearingTile(tx, ty)
+                  ? `cgrass${v}`
+                  : `fgrass${v}`;
+          const t = anchor(this.add.image(p.x, p.y, key), key).setDepth(D.ground + tx + ty);
+          const delay = base + Math.hypot(tx - mx, ty - my) * 45;
+          items.push({ obj: t, delay });
+          if (ty === isl.ty + isl.h - 1) {
+            const k = `cliffL${(tx + ty) % 2}`;
+            const c = anchor(this.add.image(iso(tx, ty + 1).x, iso(tx, ty + 1).y, k), k).setDepth(D.cliff);
+            items.push({ obj: c, delay });
+          }
+          if (tx === isl.tx + isl.w - 1) {
+            const k = `cliffR${(tx + ty) % 2}`;
+            const c = anchor(this.add.image(iso(tx + 1, ty + 1).x, iso(tx + 1, ty + 1).y, k), k).setDepth(D.cliff);
+            items.push({ obj: c, delay });
+          }
         }
-        if (tx === N - 1) {
-          const k = `cliffR${(tx + ty) % 2}`;
-          const c = anchor(this.add.image(iso(tx + 1, ty + 1).x, iso(tx + 1, ty + 1).y, k), k).setDepth(D.cliff);
-          items.push({ obj: c, delay });
-        }
-      }
+    }
+    const b = iso(BRIDGE.tx, BRIDGE.ty);
+    items.push({ obj: anchor(this.add.image(b.x, b.y, 'bridge'), 'bridge').setDepth(D.decal), delay: 300 });
+
+    // в лесу темнее, а на поляну падает солнечный свет
+    for (let i = 0; i < 10; i++) {
+      const p = iso(FOREST.tx + Phaser.Math.FloatBetween(0.5, FOREST.w - 0.5), FOREST.ty + Phaser.Math.FloatBetween(0.5, FOREST.h - 0.5));
+      const s = this.add.image(p.x, p.y, 'soft').setScale(Phaser.Math.FloatBetween(5, 8), Phaser.Math.FloatBetween(2.5, 3.5));
+      items.push({ obj: s.setTint(0x0c2a10).setAlpha(0.14).setDepth(D.ground + 100), delay: 700 });
+    }
+    const cl = iso(CLEARING.cx, CLEARING.cy);
+    const sun = this.add
+      .image(cl.x, cl.y, 'soft')
+      .setScale(11, 5.5)
+      .setTint(0xfff0a0)
+      .setAlpha(0.22)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(D.ground + 101);
+    items.push({ obj: sun, delay: 800 });
     // крупные пятна света и тени на траве — ломают «шахматку» тайлов
     for (let i = 0; i < 26; i++) {
       const p = iso(Phaser.Math.FloatBetween(0.5, N - 0.5), Phaser.Math.FloatBetween(0.5, N - 0.5));
       const light = i % 2 === 0;
+      if (!light && p.y > (N - 1.5) * TH) continue;
       const s = this.add
         .image(p.x, p.y, 'soft')
         .setScale(Phaser.Math.FloatBetween(5, 9), Phaser.Math.FloatBetween(2.5, 4))
@@ -186,6 +273,7 @@ export class FarmScene extends Phaser.Scene {
       const c = iso(b.tx + b.w / 2, b.ty + b.h / 2);
       const img = anchor(this.add.image(c.x, c.y, b.kind), b.kind).setDepth(c.y);
       this.makeTappable(img, b.kind);
+      if (b.kind === 'barn') this.barn = img;
       objs.push(img);
       if (b.kind === 'windmill') {
         const hub = POINTS.windmillHub;
@@ -214,25 +302,185 @@ export class FarmScene extends Phaser.Scene {
 
   private buildDecor() {
     const objs: Img[] = [];
-    for (const d of DECOR) {
-      const c = tileCenter(d.tx, d.ty);
+    const all = [...DECOR.map((d) => ({ ...d, dx: 0, dy: 0 })), ...FOREST_DECOR];
+    for (const d of all) {
+      const c = tileCenter(d.tx + d.dx, d.ty + d.dy);
       const img = anchor(this.add.image(c.x, c.y, d.kind), d.kind).setDepth(c.y);
       objs.push(img);
-      if (d.kind === 'tree' || d.kind === 'pine') {
-        // деревья слегка покачиваются от ветра
+      if (d.kind === 'tree' || d.kind === 'pine' || d.kind === 'fern') {
+        // деревья и папоротники слегка покачиваются от ветра
         this.tweens.add({
           targets: img,
-          angle: { from: -1.2, to: 1.2 },
+          angle: { from: d.kind === 'fern' ? -3 : -1.2, to: d.kind === 'fern' ? 3 : 1.2 },
           duration: Phaser.Math.Between(1800, 2600),
           yoyo: true,
           repeat: -1,
           ease: 'Sine.InOut',
           delay: Phaser.Math.Between(0, 1500),
         });
-        this.makeTappable(img, 'tree');
+        if (d.kind !== 'fern') this.makeTappable(img, 'tree');
       }
     }
     return objs;
+  }
+
+  // ---------------------------------------------------------------- грибы
+
+  private addMushroomView(m: Mushroom, animate: boolean) {
+    const p = iso(m.tx, m.ty);
+    const stage = mushroomStage(state.mushroomGrowth(m));
+    const key = `mush_${m.kind}${stage}`;
+    const img = anchor(this.add.image(p.x, p.y, key), key).setDepth(p.y);
+    const view: MushroomView = { m, img, stage, idle: null };
+    this.mushViews.set(m.id, view);
+    if (animate) {
+      // гриб тихо вылезает из земли — без звука, его ещё нужно найти
+      img.setScale(0.2, 0);
+      this.tweens.add({ targets: img, scaleX: 1, scaleY: 1, duration: 500, ease: 'Back.Out' });
+      this.fx.dust.explode(3, p.x, p.y);
+    }
+    if (stage === 3) {
+      if (this.intro) this.time.delayedCall(3500, () => this.mushViews.has(m.id) && this.startIdle(view));
+      else this.startIdle(view);
+    }
+  }
+
+  /** Спелый гриб время от времени «подпрыгивает» — так его легче заметить. */
+  private startIdle(view: MushroomView) {
+    view.idle?.remove();
+    view.idle = this.tweens.add({
+      targets: view.img,
+      scaleY: { from: 1, to: 0.86 },
+      scaleX: { from: 1, to: 1.1 },
+      duration: 110,
+      yoyo: true,
+      repeat: -1,
+      repeatDelay: Phaser.Math.Between(2200, 4200),
+      delay: Phaser.Math.Between(0, 2000),
+      ease: 'Sine.Out',
+    });
+  }
+
+  private refreshMushroom(view: MushroomView) {
+    const stage = mushroomStage(state.mushroomGrowth(view.m));
+    if (stage === view.stage) return;
+    view.stage = stage;
+    const key = `mush_${view.m.kind}${stage}`;
+    anchor(view.img.setTexture(key), key);
+    view.img.setScale(0.7, 0.5);
+    this.tweens.add({ targets: view.img, scaleX: 1, scaleY: 1, duration: 420, ease: 'Back.Out' });
+    if (stage === 3) this.time.delayedCall(450, () => this.startIdle(view));
+  }
+
+  /** Ближайший к точке касания гриб: грибы маленькие, поэтому зона нажатия шире картинки. */
+  private mushroomAt(wx: number, wy: number) {
+    const radius = Math.max(80, 40 / this.zoomLevel);
+    let best: MushroomView | null = null;
+    let bestD = radius;
+    for (const v of this.mushViews.values()) {
+      const d = Phaser.Math.Distance.Between(wx, wy, v.img.x, v.img.y - 36 * (v.stage / 3));
+      if (d < bestD) {
+        bestD = d;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  private tapMushroom(view: MushroomView) {
+    const { m, img } = view;
+    const def = MUSHROOMS[m.kind];
+    const screen = this.toScreen(img.x, img.y - 40);
+    if (state.mushroomGrowth(m) < 1) {
+      const sec = Math.ceil(state.mushroomMsLeft(m) / 1000);
+      this.ui.floatText(screen.x, screen.y - 20, `Ещё растёт · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`, '#ffffff');
+      this.tweens.add({ targets: img, angle: { from: -8, to: 8 }, duration: 60, yoyo: true, repeat: 2, onComplete: () => img.setAngle(0) });
+      sfx.click();
+      return;
+    }
+    if (!state.pickMushroom(m.id)) return;
+    this.mushViews.delete(m.id);
+    view.idle?.remove();
+    this.ui.foundMushroom = true;
+    this.ui.updateHint();
+
+    const rare = m.kind === 'porcini';
+    sfx.mushroom(rare);
+    this.fx.stars.explode(rare ? 22 : 12, img.x, img.y - 30);
+    this.fx.leaves.explode(6, img.x, img.y - 10);
+    this.ui.floatText(screen.x, screen.y - 30, rare ? `${def.name}!` : def.name, rare ? '#ffe066' : '#ffffff');
+    this.ui.flyIcons(screen.x, screen.y, 'i_star', 'xp', 1, 200);
+    this.flyToBarn(img, rare);
+  }
+
+  /** Гриб подпрыгивает, крутится и по высокой дуге улетает в амбар. */
+  private flyToBarn(img: Img, rare: boolean) {
+    this.ui.expect('mushrooms');
+    img.setDepth(D.sky - 1);
+    const start = { x: img.x, y: img.y - 90 };
+    const door = { x: this.barn.x - 70, y: this.barn.y - 60 };
+    const dist = Phaser.Math.Distance.Between(start.x, start.y, door.x, door.y);
+    const ctrl = { x: (start.x + door.x) / 2 + 200, y: Math.min(start.y, door.y) - 350 - dist * 0.25 };
+    const trail = this.add
+      .particles(0, 0, 'spark', {
+        lifespan: 450,
+        frequency: 28,
+        scale: { start: rare ? 0.6 : 0.4, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        tint: rare ? 0xffe066 : 0xffffff,
+        blendMode: Phaser.BlendModes.ADD,
+      })
+      .setDepth(D.sky - 2);
+    trail.startFollow(img);
+
+    // 1) подпрыгивает из земли
+    this.tweens.add({
+      targets: img,
+      y: start.y,
+      scaleX: 1.35,
+      scaleY: 1.35,
+      duration: 260,
+      ease: 'Back.Out',
+      onComplete: () => {
+        // 2) летит по дуге Безье к воротам амбара, вращаясь и уменьшаясь
+        const path = { t: 0 };
+        this.tweens.add({
+          targets: path,
+          t: 1,
+          delay: 120,
+          duration: Phaser.Math.Clamp(dist / 2.2, 750, 1500),
+          ease: 'Sine.In',
+          onUpdate: () => {
+            const t = path.t;
+            const u = 1 - t;
+            img.setPosition(
+              u * u * start.x + 2 * u * t * ctrl.x + t * t * door.x,
+              u * u * start.y + 2 * u * t * ctrl.y + t * t * door.y,
+            );
+            img.setScale(1.35 - t * 0.85);
+            img.setAngle(t * 540);
+          },
+          onComplete: () => {
+            img.destroy();
+            trail.stopFollow();
+            trail.stop();
+            this.time.delayedCall(500, () => trail.destroy());
+            sfx.stash();
+            this.fx.dust.explode(6, door.x, door.y + 40);
+            this.fx.stars.explode(8, door.x, door.y);
+            this.tweens.add({
+              targets: this.barn,
+              scaleX: 1.05,
+              scaleY: 0.95,
+              duration: 90,
+              yoyo: true,
+              onComplete: () => this.barn.setScale(1),
+            });
+            this.ui.arrive('mushrooms');
+          },
+        });
+      },
+    });
   }
 
   private makeTappable(img: Img, kind: BuildingKind | 'tree' | 'chicken') {
@@ -497,6 +745,69 @@ export class FarmScene extends Phaser.Scene {
     }
   }
 
+  /** Лес: светлячки над поляной, падающие листья и редкие искорки у спелых грибов. */
+  private buildForestAmbient() {
+    const cl = iso(CLEARING.cx, CLEARING.cy);
+    this.add
+      .particles(0, 0, 'soft', {
+        x: { min: cl.x - 300, max: cl.x + 300 },
+        y: { min: cl.y - 200, max: cl.y + 80 },
+        lifespan: 4200,
+        frequency: 260,
+        speedX: { min: -14, max: 14 },
+        speedY: { min: -22, max: -6 },
+        scale: { onEmit: () => 0, onUpdate: (_p, _k, t) => Math.sin(t * Math.PI) * 0.22 },
+        tint: [0xfff3a0, 0xd8ff9a],
+        blendMode: Phaser.BlendModes.ADD,
+      })
+      .setDepth(D.fx);
+    this.add
+      .particles(0, 0, 'leafP', {
+        emitZone: {
+          type: 'random',
+          source: {
+            getRandomPoint: (pt: Phaser.Types.Math.Vector2Like) => {
+              const p = iso(FOREST.tx + Math.random() * FOREST.w, FOREST.ty + Math.random() * FOREST.h);
+              pt.x = p.x;
+              pt.y = p.y - 260;
+              return pt;
+            },
+          },
+        },
+        lifespan: 3200,
+        frequency: 700,
+        speedX: { min: -30, max: 30 },
+        speedY: { min: 30, max: 60 },
+        rotate: { start: 0, end: 540 },
+        scale: { min: 0.7, max: 1.1 },
+        alpha: { start: 1, end: 0, ease: 'Cubic.In' },
+        tint: [0xd9a441, 0xb5652a, 0x9ccf4a],
+      })
+      .setDepth(D.fx);
+    // едва заметная искорка у спелого гриба — подсказка для внимательных
+    this.add
+      .particles(0, 0, 'spark', {
+        lifespan: 800,
+        frequency: 900,
+        speedY: { min: -40, max: -15 },
+        scale: { onEmit: () => 0, onUpdate: (_p, _k, t) => Math.sin(t * Math.PI) * 0.35 },
+        blendMode: Phaser.BlendModes.ADD,
+        emitZone: {
+          type: 'random',
+          source: {
+            getRandomPoint: (pt: Phaser.Types.Math.Vector2Like) => {
+              const ripe = [...this.mushViews.values()].filter((v) => v.stage === 3);
+              const v = ripe.length ? Phaser.Utils.Array.GetRandom(ripe) : null;
+              pt.x = v ? v.img.x + Phaser.Math.Between(-18, 18) : -99999;
+              pt.y = v ? v.img.y - Phaser.Math.Between(20, 50) : -99999;
+              return pt;
+            },
+          },
+        },
+      })
+      .setDepth(D.fx);
+  }
+
   private chickenWander(ch: Chicken) {
     if (ch.busy) {
       this.time.delayedCall(800, () => this.chickenWander(ch));
@@ -622,8 +933,8 @@ export class FarmScene extends Phaser.Scene {
 
   private clampCamera() {
     const cam = this.cameras.main;
-    const cx = Phaser.Math.Clamp(cam.scrollX + cam.width / 2, -N * 110, N * 110);
-    const cy = Phaser.Math.Clamp(cam.scrollY + cam.height / 2, 0, N * 125);
+    const cx = Phaser.Math.Clamp(cam.scrollX + cam.width / 2, WORLD_BOUNDS.x0, WORLD_BOUNDS.x1);
+    const cy = Phaser.Math.Clamp(cam.scrollY + cam.height / 2, WORLD_BOUNDS.y0, WORLD_BOUNDS.y1);
     cam.scrollX = cx - cam.width / 2;
     cam.scrollY = cy - cam.height / 2;
   }
@@ -671,6 +982,13 @@ export class FarmScene extends Phaser.Scene {
 
     if (this.buildMode) {
       this.tryBuild(tx, ty);
+      return;
+    }
+
+    const w = this.cameras.main.getWorldPoint(p.x, p.y);
+    const mush = this.mushroomAt(w.x, w.y);
+    if (mush) {
+      this.tapMushroom(mush);
       return;
     }
 
@@ -761,7 +1079,7 @@ export class FarmScene extends Phaser.Scene {
       sfx.whoosh();
       let delay = 0;
       for (const s of sold) {
-        this.ui.flyIcons(top.x, top.y + 40, s.crop === 'wheat' ? 'i_wheat' : 'i_carrot', 'none', Math.min(4, s.count), delay, true);
+        this.ui.flyIcons(top.x, top.y + 40, itemIcon(s.item), 'none', Math.min(4, s.count), delay, true);
         delay += 120;
       }
       const total = sold.reduce((a, s) => a + s.coins, 0);
@@ -937,6 +1255,8 @@ export class FarmScene extends Phaser.Scene {
     if (this.growthTimer > 250) {
       this.growthTimer = 0;
       for (const v of this.plotViews.values()) this.refreshPlot(v, true);
+      if (!this.intro) state.tickMushrooms(randomMushroomSpot);
+      for (const v of this.mushViews.values()) this.refreshMushroom(v);
     }
   }
 }
