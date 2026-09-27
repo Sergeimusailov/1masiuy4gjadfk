@@ -8,7 +8,7 @@ import { safeInsets } from '../game/viewport';
 // Интерфейс живёт в отдельной сцене поверх мира: его не двигает и не масштабирует
 // камера фермы. Координаты здесь — CSS-пиксели, камера увеличивает их в DPR раз.
 
-type Counter = 'coins' | 'wheat' | 'carrot' | 'mushrooms';
+export type Counter = 'coins' | 'wheat' | 'carrot' | 'mushrooms' | 'milk' | 'wool';
 type Target = Counter | 'xp' | 'none';
 
 const textStyle = (size: number, color = '#ffffff'): Phaser.Types.GameObjects.Text.TextStyle => ({
@@ -35,6 +35,8 @@ export class UIScene extends Phaser.Scene {
   pickerOpen = false;
   /** Подсказка про лес нужна только пока игрок не нашёл первый гриб. */
   foundMushroom = false;
+  /** Подсказка про луг — пока игрок ни разу не посеял траву и не собрал продукт. */
+  visitedMeadow = false;
 
   private farm!: FarmScene;
   private counters = {} as Record<Counter, CounterView>;
@@ -106,10 +108,13 @@ export class UIScene extends Phaser.Scene {
       this.syncCounter('wheat');
       this.syncCounter('carrot');
       this.syncCounter('mushrooms');
+      this.syncCounter('milk');
+      this.syncCounter('wool');
       this.updateHint();
     });
     state.on('plot', () => this.updateHint());
     state.on('mushrooms:spawn', () => this.updateHint());
+    state.on('animal', () => this.updateHint());
     state.on('xp', () => this.syncXp());
     state.on('levelup', (lvl: number) => this.time.delayedCall(700, () => this.celebrate(lvl)));
 
@@ -159,6 +164,8 @@ export class UIScene extends Phaser.Scene {
       ['wheat', 'i_wheat'],
       ['carrot', 'i_carrot'],
       ['mushrooms', 'i_mush'],
+      ['milk', 'i_milk'],
+      ['wool', 'i_wool'],
     ];
     for (const [key, icon] of defs) {
       const pill = this.add.nineslice(0, 0, 'pill', undefined, 250, 80, 40, 40, 0, 0).setScale(0.5).setOrigin(1, 0.5);
@@ -296,13 +303,16 @@ export class UIScene extends Phaser.Scene {
     if (this.cancelBtn?.visible) return;
     const anyPlanted = state.plots.some((p) => p.crop);
     const anyRipe = state.plots.some((p) => p.crop && state.growth(p) >= 1);
-    const stock = state.inventory.wheat + state.inventory.carrot + state.mushroomCount;
+    const stock =
+      state.inventory.wheat + state.inventory.carrot + state.mushroomCount + state.inventory.milk + state.inventory.wool;
     const ripeMushrooms = state.mushrooms.some((m) => state.mushroomGrowth(m) >= 1);
     let text = '';
     if (!anyPlanted && stock === 0) text = 'Нажмите на пустую грядку, чтобы посадить';
     else if (anyRipe) text = 'Урожай созрел — нажмите на грядку!';
     else if (stock > 0) text = 'Нажмите на амбар, чтобы продать урожай';
     else if (ripeMushrooms && !this.foundMushroom) text = 'За мостиком в лесу выросли грибы — поищите!';
+    else if (!this.visitedMeadow && state.animals.some((a) => a.fedAt === null))
+      text = 'На лугу справа голодные коровы и овечки — посейте им траву';
     this.showHint(text);
   }
 
@@ -535,7 +545,9 @@ export class UIScene extends Phaser.Scene {
     const bottom = H - 52 - Math.max(0, safe.bottom - 10);
     this.levelBox.setPosition(34, top);
     // счётчики колонкой в правом верхнем углу
-    (['coins', 'wheat', 'carrot', 'mushrooms'] as Counter[]).forEach((k, i) => this.counters[k].box.setPosition(W - 14, top + i * 48));
+    (['coins', 'wheat', 'carrot', 'mushrooms', 'milk', 'wool'] as Counter[]).forEach((k, i) =>
+      this.counters[k].box.setPosition(W - 14, top + i * 46),
+    );
     this.buildBtn.setPosition(W / 2, bottom);
     this.cancelBtn.setPosition(W / 2, bottom);
     this.hint.setPosition(W / 2, bottom - 62);

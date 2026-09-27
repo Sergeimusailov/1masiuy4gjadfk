@@ -51,6 +51,66 @@ function noise(dur: number, vol = 0.4, delay = 0, freq = 2000) {
   src.start(t);
 }
 
+/**
+ * «Голос» животного: пилообразная волна через фильтр низких частот,
+ * с вибрато (дрожание высоты) и тремоло (дрожание громкости).
+ */
+function voice(o: {
+  from: number;
+  to: number;
+  dur: number;
+  lowpass: number;
+  vibRate?: number;
+  vibDepth?: number;
+  tremRate?: number;
+  tremDepth?: number;
+  vol?: number;
+  delay?: number;
+}) {
+  const a = audio();
+  if (!a || !master) return;
+  const t = a.currentTime + (o.delay ?? 0);
+  const osc = a.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(o.from, t);
+  osc.frequency.linearRampToValueAtTime(o.to, t + o.dur);
+  const vib = a.createOscillator();
+  const vibGain = a.createGain();
+  vib.frequency.value = o.vibRate ?? 5;
+  vibGain.gain.value = o.vibDepth ?? 0;
+  vib.connect(vibGain).connect(osc.frequency);
+  const lp = a.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = o.lowpass;
+  lp.Q.value = 4;
+  const env = a.createGain();
+  const vol = o.vol ?? 0.5;
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(vol, t + 0.08);
+  env.gain.setValueAtTime(vol, t + o.dur * 0.7);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+  let out: AudioNode = env;
+  if (o.tremRate) {
+    const trem = a.createGain();
+    const lfo = a.createOscillator();
+    const depth = a.createGain();
+    trem.gain.value = 1 - (o.tremDepth ?? 0.5);
+    lfo.frequency.value = o.tremRate;
+    depth.gain.value = o.tremDepth ?? 0.5;
+    lfo.connect(depth).connect(trem.gain);
+    env.connect(trem);
+    out = trem;
+    lfo.start(t);
+    lfo.stop(t + o.dur + 0.05);
+  }
+  osc.connect(lp).connect(env);
+  out.connect(master);
+  osc.start(t);
+  vib.start(t);
+  osc.stop(t + o.dur + 0.05);
+  vib.stop(t + o.dur + 0.05);
+}
+
 export const sfx = {
   unlock: () => audio(),
   click: () => tone(660, 0.08, 'triangle', 0, 0.5, 880),
@@ -96,6 +156,27 @@ export const sfx = {
   stash: () => {
     tone(180, 0.12, 'sine', 0, 0.6, 90);
     tone(1568, 0.12, 'triangle', 0.03, 0.18);
+  },
+  /** «Му-у-у»: низкий тон, который плавно опускается. */
+  moo: () => {
+    voice({ from: 150, to: 185, dur: 0.35, lowpass: 650, vibRate: 5, vibDepth: 3, vol: 0.55 });
+    voice({ from: 185, to: 120, dur: 0.95, lowpass: 600, vibRate: 5, vibDepth: 5, vol: 0.55, delay: 0.3 });
+  },
+  /** «Бе-е-е»: высокий дрожащий голос. */
+  baa: () => {
+    voice({ from: 470, to: 430, dur: 0.75, lowpass: 1900, vibRate: 7, vibDepth: 10, tremRate: 24, tremDepth: 0.6, vol: 0.42 });
+  },
+  /** Фонтан кита: шипящий выдох и низкий китовый голос. */
+  spout: () => {
+    noise(1.1, 0.8, 0, 1400);
+    noise(0.7, 0.4, 0.15, 3200);
+    tone(260, 1.2, 'sine', 0.2, 0.35, 140);
+    tone(330, 0.9, 'sine', 0.35, 0.2, 420);
+  },
+  /** Молоко или шерсть долетели до амбара. */
+  collect: () => {
+    tone(784, 0.08, 'triangle', 0, 0.4);
+    tone(1175, 0.2, 'triangle', 0.07, 0.35);
   },
   levelUp: () => {
     [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.25, 'triangle', i * 0.1, 0.5));

@@ -17,7 +17,7 @@ export function unIso(x: number, y: number) {
 }
 
 export interface Island {
-  kind: 'farm' | 'forest';
+  kind: 'farm' | 'forest' | 'meadow';
   tx: number;
   ty: number;
   w: number;
@@ -28,11 +28,16 @@ export interface Island {
 export const ISLANDS: Island[] = [
   { kind: 'farm', tx: 0, ty: 0, w: N, h: N },
   { kind: 'forest', tx: 1, ty: 14, w: 8, h: 8 },
+  { kind: 'meadow', tx: 14, ty: 2, w: 8, h: 8 },
 ];
 export const FOREST = ISLANDS[1];
+export const MEADOW = ISLANDS[2];
 
-/** Мостик через пролив между островами. */
-export const BRIDGE = { tx: 4, ty: 12, len: 2 };
+/** Мостики через проливы: в лес (вдоль оси ty) и на луг (вдоль оси tx). */
+export const BRIDGES: Array<{ tx: number; ty: number; axis: 'u' | 'v' }> = [
+  { tx: 4, ty: 12, axis: 'v' },
+  { tx: 12, ty: 6, axis: 'u' },
+];
 
 /** Поляна в центре леса, где растут грибы (в координатах тайлов). */
 export const CLEARING = { cx: 4.9, cy: 18.1, r: 2.35 };
@@ -60,7 +65,7 @@ export const BUILDINGS: BuildingDef[] = [
 
 export const POND = { tx: 1, ty: 8, w: 3, h: 2 };
 
-export type DecorKind = 'tree' | 'pine' | 'bush' | 'rock' | 'sign' | 'fern' | 'stump';
+export type DecorKind = 'tree' | 'pine' | 'bush' | 'rock' | 'sign' | 'signMeadow' | 'fern' | 'stump' | 'hay';
 export const DECOR: Array<{ kind: DecorKind; tx: number; ty: number }> = [
   { kind: 'pine', tx: 0, ty: 0 },
   { kind: 'tree', tx: 1, ty: 0 },
@@ -84,6 +89,7 @@ export const DECOR: Array<{ kind: DecorKind; tx: number; ty: number }> = [
   { kind: 'rock', tx: 6, ty: 10 },
   { kind: 'rock', tx: 3, ty: 6 },
   { kind: 'sign', tx: 5, ty: 10 },
+  { kind: 'signMeadow', tx: 10, ty: 7 },
 ];
 
 /** Тропинка: от дома к амбару и вниз к мельнице. */
@@ -93,6 +99,9 @@ for (let ty = 4; ty <= 9; ty++) PATH.add(`5,${ty}`);
 for (let tx = 6; tx <= 8; tx++) PATH.add(`${tx},9`);
 // ответвление к мостику в лес
 for (let ty = 9; ty <= 11; ty++) PATH.add(`4,${ty}`);
+// и к мостику на луг
+for (let ty = 4; ty <= 6; ty++) PATH.add(`9,${ty}`);
+for (let tx = 10; tx <= 11; tx++) PATH.add(`${tx},6`);
 
 export const INITIAL_PLOTS: Array<[number, number]> = [
   [6, 5], [7, 5], [8, 5],
@@ -163,3 +172,34 @@ export function randomMushroomSpot(existing: Array<{ tx: number; ty: number }>) 
   }
   return null;
 }
+
+// ---------------------------------------------------------------- луг
+
+/** Тропинка от моста вглубь луга. */
+export const MEADOW_PATH = new Set<string>(['14,6', '15,6']);
+
+/** Грядки-пастбища, где сеют траву для животных. */
+export const PASTURES: Array<[number, number]> = [
+  [17, 3],
+  [18, 3],
+  [17, 8],
+  [18, 8],
+];
+
+export const MEADOW_DECOR: Array<{ kind: DecorKind; tx: number; ty: number; dx: number; dy: number }> = [
+  { kind: 'tree', tx: 14, ty: 2, dx: 0, dy: 0 },
+  { kind: 'pine', tx: 21, ty: 2, dx: 0, dy: 0 },
+  { kind: 'tree', tx: 21, ty: 9, dx: 0, dy: 0 },
+  { kind: 'pine', tx: 14, ty: 9, dx: 0, dy: 0 },
+  { kind: 'hay', tx: 20, ty: 4, dx: 0, dy: 0 },
+  { kind: 'hay', tx: 20, ty: 5, dx: 0.1, dy: 0.2 },
+  { kind: 'hay', tx: 15, ty: 8, dx: 0, dy: 0 },
+  { kind: 'bush', tx: 15, ty: 2, dx: 0, dy: 0 },
+  { kind: 'bush', tx: 21, ty: 6, dx: 0, dy: 0 },
+];
+
+/** Где могут гулять животные (дробные координаты тайлов). */
+export const MEADOW_WALK = { tx0: 15.2, tx1: 20.6, ty0: 2.8, ty1: 8.8 };
+
+/** Кит плавает в открытом море южнее фермы, между лесом и лугом. */
+export const WHALE_SEA = { tx0: 11, tx1: 19, ty0: 13.5, ty1: 18 };
