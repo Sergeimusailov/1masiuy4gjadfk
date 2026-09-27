@@ -30,6 +30,7 @@ import type { Counter, UIScene } from './UIScene';
 import { D } from './depth';
 import { Meadow } from './meadow';
 import { Whale } from './whale';
+import { Ufo, type Abductee } from './ufo';
 
 type Img = Phaser.GameObjects.Image;
 type Emitter = Phaser.GameObjects.Particles.ParticleEmitter;
@@ -66,6 +67,10 @@ interface Chicken {
   y: number;
   hop: number;
   busy: boolean;
+  lift: number;
+  away: boolean;
+  /** Номер текущего цикла прогулки: старые отложенные вызовы по нему отбрасываются. */
+  loop: number;
 }
 
 const tileCenter = (tx: number, ty: number) => iso(tx + 0.5, ty + 0.5);
@@ -102,6 +107,7 @@ export class FarmScene extends Phaser.Scene {
   private mushViews = new Map<number, MushroomView>();
   private meadow!: Meadow;
   private whale!: Whale;
+  private ufo!: Ufo;
   private barn!: Img;
   private highlight!: Img;
   private ghost!: Img;
@@ -140,6 +146,7 @@ export class FarmScene extends Phaser.Scene {
     this.buildForestAmbient();
     this.meadow = new Meadow(this);
     this.buildCues();
+    this.ufo = new Ufo(this, () => [...this.meadow.abductees(), ...this.chickenAbductees()]);
     this.whale = new Whale(this);
     this.setupCamera();
     this.setupInput();
@@ -807,11 +814,11 @@ export class FarmScene extends Phaser.Scene {
       const c = tileCenter(tx, ty);
       const shadow = this.add.image(c.x, c.y, 'soft').setTint(0x1a2a0a).setAlpha(0.3).setScale(0.8, 0.28);
       const img = anchor(this.add.image(c.x, c.y, 'chicken'), 'chicken');
-      const ch: Chicken = { img, shadow, x: c.x, y: c.y, hop: 0, busy: false };
+      const ch: Chicken = { img, shadow, x: c.x, y: c.y, hop: 0, busy: false, lift: 0, away: false, loop: 0 };
       this.chickens.push(ch);
       this.makeTappable(img, 'chicken');
       img.setData('chicken', ch);
-      this.time.delayedCall(Phaser.Math.Between(300, 2000), () => this.chickenWander(ch));
+      this.time.delayedCall(Phaser.Math.Between(300, 2000), () => this.chickenWander(ch, 0));
     }
   }
 
@@ -878,9 +885,32 @@ export class FarmScene extends Phaser.Scene {
       .setDepth(D.fx);
   }
 
-  private chickenWander(ch: Chicken) {
+  /** Куры тоже могут попасть на борт летающей тарелки. */
+  private chickenAbductees(): Abductee[] {
+    return this.chickens.map((ch) => ({
+      ref: ch,
+      kind: 'chicken' as const,
+      free: () => !ch.busy && !ch.away && ch.lift === 0,
+      freeze: () => {
+        ch.busy = true;
+        this.tweens.killTweensOf(ch);
+        this.tweens.killTweensOf(ch.img);
+        ch.hop = 0;
+        ch.img.setAngle(0);
+      },
+      release: () => {
+        ch.busy = false;
+        ch.loop += 1;
+        this.chickenWander(ch, ch.loop);
+      },
+      landingSpot: () => iso(Phaser.Math.FloatBetween(5.2, 9.8), Phaser.Math.FloatBetween(4.2, 8.8)),
+    }));
+  }
+
+  private chickenWander(ch: Chicken, loop: number) {
+    if (loop !== ch.loop) return;
     if (ch.busy) {
-      this.time.delayedCall(800, () => this.chickenWander(ch));
+      this.time.delayedCall(800, () => this.chickenWander(ch, loop));
       return;
     }
     const cur = unIso(ch.x, ch.y);
@@ -910,7 +940,7 @@ export class FarmScene extends Phaser.Scene {
         // иногда клюёт зёрнышки
         if (Math.random() < 0.6)
           this.tweens.add({ targets: ch.img, angle: ch.img.flipX ? -25 : 25, duration: 120, yoyo: true, repeat: 2 });
-        this.time.delayedCall(Phaser.Math.Between(700, 2600), () => this.chickenWander(ch));
+        this.time.delayedCall(Phaser.Math.Between(700, 2600), () => this.chickenWander(ch, loop));
       },
     });
   }
@@ -1061,6 +1091,7 @@ export class FarmScene extends Phaser.Scene {
       this.tapMushroom(mush);
       return;
     }
+    if (this.ufo.tap(w.x, w.y)) return;
     if (this.whale.tap(w.x, w.y)) return;
     if (this.meadow.tap(w.x, w.y, tx, ty)) return;
 
@@ -1171,6 +1202,7 @@ export class FarmScene extends Phaser.Scene {
       this.fx.leaves.explode(12, img.x, img.y - 150);
     } else if (kind === 'chicken') {
       const ch = img.getData('chicken') as Chicken;
+      if (ch.away || ch.lift > 0) return;
       sfx.cluck();
       ch.busy = true;
       this.fx.feathers.explode(8, ch.x, ch.y - 40);
@@ -1319,10 +1351,16 @@ export class FarmScene extends Phaser.Scene {
 
     this.meadow.update();
     this.whale.update();
+    this.ufo.update();
 
     for (const ch of this.chickens) {
-      ch.img.setPosition(ch.x, ch.y - ch.hop).setDepth(ch.y);
-      ch.shadow.setPosition(ch.x, ch.y).setDepth(ch.y - 1).setScale(0.8 - ch.hop * 0.004, 0.28 - ch.hop * 0.001);
+      ch.img.setVisible(!ch.away).setPosition(ch.x, ch.y - ch.hop - ch.lift).setDepth(ch.lift > 0 ? D.fx - 4 : ch.y);
+      ch.shadow
+        .setVisible(!ch.away)
+        .setPosition(ch.x, ch.y)
+        .setDepth(ch.y - 1)
+        .setScale(0.8 - ch.hop * 0.004, 0.28 - ch.hop * 0.001)
+        .setAlpha(0.3 * Math.max(0, 1 - ch.lift / 300));
     }
 
     this.growthTimer += delta;

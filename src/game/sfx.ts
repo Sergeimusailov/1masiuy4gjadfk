@@ -111,6 +111,32 @@ function voice(o: {
   vib.stop(t + o.dur + 0.05);
 }
 
+/** Звук «теремина» из старой фантастики: синусоида с сильным вибрато. */
+function theremin(from: number, to: number, dur: number, vol = 0.25, delay = 0) {
+  const a = audio();
+  if (!a || !master) return;
+  const t = a.currentTime + delay;
+  const osc = a.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(from, t);
+  osc.frequency.exponentialRampToValueAtTime(to, t + dur);
+  const lfo = a.createOscillator();
+  const depth = a.createGain();
+  lfo.frequency.value = 7;
+  depth.gain.value = from * 0.06;
+  lfo.connect(depth).connect(osc.frequency);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.15);
+  g.gain.setValueAtTime(vol, t + dur * 0.75);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(master);
+  osc.start(t);
+  lfo.start(t);
+  osc.stop(t + dur + 0.05);
+  lfo.stop(t + dur + 0.05);
+}
+
 // ---------------------------------------------------------------- записанные звуки
 
 /**
@@ -222,6 +248,22 @@ export const sfx = {
   collect: () => {
     tone(784, 0.08, 'triangle', 0, 0.4);
     tone(1175, 0.2, 'triangle', 0.07, 0.35);
+  },
+  /** Тарелка прилетает или улетает: завывание вверх-вниз. */
+  ufo: () => {
+    theremin(500, 900, 0.6, 0.22);
+    theremin(900, 420, 0.9, 0.22, 0.55);
+  },
+  /** Луч притяжения: гудение, которое поднимается вверх. */
+  beam: (up = true) => {
+    theremin(up ? 300 : 900, up ? 900 : 300, 1.6, 0.18);
+    noise(1.4, 0.12, 0, up ? 2500 : 1500);
+  },
+  /** Нажали на тарелку: инопланетное «бип-буп». */
+  ufoBeep: () => {
+    tone(1400, 0.08, 'square', 0, 0.12);
+    tone(900, 0.08, 'square', 0.1, 0.12);
+    tone(1700, 0.12, 'square', 0.2, 0.12);
   },
   levelUp: () => {
     [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.25, 'triangle', i * 0.1, 0.5));
